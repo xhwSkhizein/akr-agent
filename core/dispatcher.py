@@ -119,13 +119,6 @@ class RuleDispatcher:
             self._active_task_executions.discard
         )  # 完成时自动移除
 
-    async def dispatch_initial(self) -> None:
-        """
-        初始化时调用一次，设置初始用户输入并触发初始规则检查。
-        """
-        # TODO
-        pass
-
     async def get_output_stream(self) -> AsyncGenerator[str, None]:
         """
         提供最终输出的异步生成器。

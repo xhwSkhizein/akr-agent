@@ -53,7 +53,6 @@ class Agent:
 
         await self._observable_ctx.set("user_input", user_input)
         await self._observable_ctx.append("dialogue.history", f"Q: {user_input}")
-        await self._rule_dispatcher.dispatch_initial()
 
         async for chunk in self._rule_dispatcher.get_output_stream():
             yield chunk
