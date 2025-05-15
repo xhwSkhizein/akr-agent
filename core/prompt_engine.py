@@ -4,14 +4,16 @@
 """
 Prompt 配置引擎，负责加载和管理 Agent 的 prompt 配置
 """
+import logging
+
+logger = logging.getLogger(__name__)
 
 import os
 from typing import List, Dict, Any
 import yaml
 from jinja2 import Template
 
-from config.agent_config import AgentConfig
-from config.rule_config import AgentMeta, RuleConfig
+from core.rule_config import AgentConfig, AgentMeta, RuleConfig
 
 
 class AgentConfigEngine:
@@ -67,9 +69,9 @@ class AgentConfigEngine:
             # 确保规则数据包含必要的字段
             if not all(k in rule_data for k in ["name", "prompt"]):
                 raise ValueError(f"Rule {rule_file} missing required fields")
+            logger.info(f"Loading rule from {rule_file}, \n{rule_data}\n")
 
             rules.append(RuleConfig(**rule_data))
-
         return rules
 
     @staticmethod

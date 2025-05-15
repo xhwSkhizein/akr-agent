@@ -8,13 +8,19 @@ prompt: |
   用户的诉求是：{{ intent_analyze_result.intent }}，用户潜在需求是：{{ intent_analyze_result.potential_need }} ， 
   用户画像特征是：{{ intent_analyze_result.feature }}
 
-prompt_detail: |
-  返回结果以json数据形式存储，字段名分别为intent、potential_need和feature, 
-  其中intent是用户的主要诉求和意图，
-  potential_need是用户可能需要知道或了解的其他信息，
-  feature是通过用户输入提取出的用户画像特征（如果无法提取则为空对象）。
-  例如：{"intent": "减脂", "potential_need": ["饮食计划", "有氧运动推荐"], "feature": {"age": 30, "gender": "男性"}}。
+prompt_detail:
 
-depend_tools: []
-ai_response_target: DIRECT_RETURN
-ai_response_key: None
+tool: LLMCallTool
+tool_params:
+  ctx:
+    - user_input
+    - system_prompt
+    - intent_analyze_result.intent
+    - intent_analyze_result.potential_need
+    - intent_analyze_result.feature
+  config:
+    - prompt
+    - prompt_detail
+  extra: {}
+tool_result_target: DIRECT_RETURN
+tool_result_key:

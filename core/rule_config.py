@@ -1,0 +1,108 @@
+import json
+import os
+import time
+from typing import Optional, Literal, List, Dict, Any
+from pydantic import BaseModel
+
+
+class AgentMeta(BaseModel):
+    name: str
+    desc: str
+    parameters: Optional[Dict[str, Any]] = None
+
+
+def save_rule_config(source: str, rule_config: "RuleConfig"):
+    # 保存到文件中
+    # 文件名：<source>_generated_<name>_<timestamp>.json
+    # 文件内容：rule_config.model_dump_json()
+    # 文件路径：logs/rule_configs/
+    # 文件夹不存在时创建
+    os.makedirs("logs/rule_configs", exist_ok=True)
+    with open(
+        f"logs/rule_configs/{source}_generated_{rule_config.name}_{time.strftime('%Y%m%d_%H%M%S')}.json",
+        "w",
+    ) as f:
+        f.write(rule_config.model_dump_json())
+
+
+def find_json_in_str(self, s: str) -> str:
+    # 从字符串中找到第一个 JSON 对象
+    start = s.find("{")
+    end = s.rfind("}")
+    if start != -1 and end != -1:
+        return s[start : end + 1]
+    return None
+
+
+class RuleConfig(BaseModel):
+    """
+    规则配置
+
+    Parameters:
+        name: 规则名称
+        depend_ctx_key: 需要从上下文中获取的数据对应的 key
+        match_condition: 需要满足的条件, 会被 eval 执行,
+                        例如："力量训练" in ctx.get("intent_analysis_result.intent")
+
+        prompt: 此规则的定制 prompt（会拼接到 system_prompt 后面）
+        prompt_detail: 规则的更多补充 prompt 信息，同样拼接在 system_prompt + prompt 后面
+
+        tool: 执行的工具调用名称
+        tool_params: 需要用到的 tools 的参数
+                    ```json
+                    {
+                        "ctx": ["user_input"], # 动态的、由其他 Rule 或者 Agent 生成
+                        "config": ["prompt", "prompt_detail"], # 固定的配置
+                        "extra": {}, # 额外的常量
+                    }
+                    ```
+        tool_result_target: 此规则 ai 输出的结果输出到哪里：\n
+                            - AS_CONTEXT 存储到上下文中
+                            - DIRECT_RETURN 直接返回给用户
+                            - NEW_RULES 生成新的规则
+        tool_result_key: 如果是 AS_CONTEXT，整个 AI 返回的 JSON 使用下面的 key 保存进 ctx 中
+    """
+
+    name: str
+    depend_ctx_key: List[str]
+    match_condition: Optional[str] = None
+
+    prompt: str
+    prompt_detail: Optional[str] = ""
+
+    tool: Optional[str] = None
+    tool_params: Optional[Dict[str, Any]] = {}
+    tool_result_target: Literal["AS_CONTEXT", "DIRECT_RETURN", "NEW_RULES"]
+    tool_result_key: Optional[str] = None
+    auto_generated: bool = False
+
+    @classmethod
+    def parse_and_gen(
+        cls, source: str, tool_result_full: str, save: bool = False
+    ) -> List["RuleConfig"]:
+        # 解析 llm_response_full 并生成新的规则
+        try:
+            json_data = json.loads(tool_result_full, strict=False)
+        except json.JSONDecodeError as e:
+            json_data = json.loads(find_json_in_str(tool_result_full), strict=False)
+            if json_data is None:
+                raise ValueError(f"Invalid JSON data: {tool_result_full}")
+        result = []
+        if isinstance(json_data, list):
+            result = [cls(**item) for item in json_data]
+        elif isinstance(json_data, dict):
+            result = [cls(**json_data)]
+        else:
+            raise ValueError(f"Invalid JSON data: {tool_result_full}")
+        if save:
+            for rule_config in result:
+                save_rule_config(source=source, rule_config=rule_config)
+
+        return result
+
+
+class AgentConfig(BaseModel):
+    name: str
+    meta: AgentMeta
+    system_prompt: str
+    rules: List[RuleConfig]

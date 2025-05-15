@@ -10,8 +10,23 @@ prompt_detail: |
   其中intent是用户的主要诉求和意图，
   potential_need是用户可能需要知道或了解的其他信息，
   feature是通过用户输入提取出的用户画像特征（如果无法提取则为空对象）。
-  例如：{"intent": "减脂", "potential_need": ["饮食计划", "有氧运动推荐"], "feature": {"age": 30, "gender": "男性"}}。
+  例如：{"intent": "减脂", "potential_need": ["饮食计划", "有氧运动推荐"], "feature": {"summary": "健身小白减脂", "age": 30, "gender": "男性"}}。
 
-depend_tools: []
-ai_response_target: AS_CONTEXT
-ai_response_key: intent_analyze_result
+tool: LLMCallTool
+tool_params:
+  ctx:
+    - system_prompt
+    - user_input
+  config:
+    - prompt
+    - prompt_detail
+  extra:
+    model: gpt-4o-mini
+    temperature: 0.7
+    max_tokens: 1024
+    stream: True
+    tools:
+      - DdgSearchTool
+      - CodeReplTool
+tool_result_target: AS_CONTEXT
+tool_result_key: intent_analyze_result

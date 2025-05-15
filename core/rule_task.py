@@ -1,19 +1,10 @@
 import logging
-from typing import TYPE_CHECKING, AsyncGenerator
+from typing import TYPE_CHECKING, AsyncGenerator, List
 
-from jinja2 import Environment, select_autoescape
+from core.tools.base import ToolCenter
 
-
-# Setup Jinja2 environment
-# You might want to move this to a more central place if used elsewhere
-jinja_env = Environment(
-    loader=None,  # We'll load templates from strings
-    autoescape=select_autoescape(["html", "xml"]),  # Basic autoescaping
-)
-
-from config.rule_config import RuleConfig
+from core.rule_config import RuleConfig
 from core.observable_ctx import ObservableCtx
-from llm.base import LLMClient
 
 if TYPE_CHECKING:
     from .dispatcher import RuleDispatcher  # Circular import for type hinting
@@ -89,98 +80,84 @@ class RuleTask:
                 return False
         return False  # Default to not ready if not forced and no condition
 
-    async def execute(
-        self,
-        ctx: ObservableCtx,
-        dispatcher: "RuleDispatcher",
-        llm_client: LLMClient,
-        base_system_prompt: str,
-        user_input_for_llm: str,  # This is ctx.get('user_input') passed for convenience
+    async def _prepare_tool_params(self, ctx: ObservableCtx) -> dict:
+        # 根据规则配置和上下文准备工具调用参数
+        tool_params = {}
+        ctx_keys = self.rule_config.tool_params.get("ctx", [])
+        for key in ctx_keys:
+            tool_params[key] = ctx.get(key)
+        logger.info(f"Tool params[after ctx]: {tool_params}")
+        config_keys = self.rule_config.tool_params.get("config", [])
+        for key in config_keys:
+            tool_params[key] = self.rule_config.__dict__[key]
+        logger.info(f"Tool params[after config]: {tool_params}")
+        extra_params = self.rule_config.tool_params.get("extra", {})
+        tool_params.update(extra_params)
+        logger.info(f"Tool params[after extra]: {tool_params}")
+
+        tool_params["ctx"] = ctx
+        tool_params["rule_config"] = self.rule_config
+
+        return tool_params
+
+    async def _handle_tool_result(
+        self, ctx: ObservableCtx, dispatcher: "RuleDispatcher", response_full: str
+    ):
+        # 根据规则配置和上下文处理工具调用结果
+        if self.rule_config.tool_result_target == "DIRECT_RETURN":
+            # save to ctx.dialogue.history
+            await ctx.append("dialogue.history", f"A: {response_full}")
+        elif self.rule_config.tool_result_target == "AS_CONTEXT":
+            await ctx.set(self.rule_config.tool_result_key, response_full)
+        elif self.rule_config.tool_result_target == "NEW_RULES":
+            # 解析&生成新的规则
+            new_rule_configs: List[RuleConfig] = RuleConfig.parse_and_gen(
+                source=self.rule_config.name,
+                tool_result_full=response_full,
+                save=True,
+            )
+            for new_cfg in new_rule_configs:
+                new_cfg.auto_generated = True
+                dispatcher.add_new_rule(new_cfg, immediate=True)
+
+    async def execute_tool(
+        self, ctx: ObservableCtx, dispatcher: "RuleDispatcher"
     ) -> AsyncGenerator[str, None]:
         """
-        Executes the rule.
-        Yields string chunks for DIRECT_RETURN rules.
-        Can update ctx or add new rules via the dispatcher.
+        执行工具调用
         """
-        logger.debug(
-            f"Executing task {self.task_id} (Name: {self.rule_config.name if hasattr(self.rule_config, 'name') else 'N/A'}). Target: {self.rule_config.ai_response_target}"
-        )
+        # 1. 准备工具调用参数
+        tool_params: dict = await self._prepare_tool_params(ctx)
+        logger.info(f"Tool params[after prepare]: {tool_params}")
 
-        # 1. Prepare prompt using Jinja2 template
-        dep_ctx_dict = {k: ctx.get(k) for k in self.rule_config.depend_ctx_key}
-
-        full_prompt_str = self.rule_config.prompt
-        if self.rule_config.prompt_detail:
-            full_prompt_str += "\n\n" + self.rule_config.prompt_detail
-
+        # 2. 执行工具调用
+        response_full = ""
         try:
-            template = jinja_env.from_string(full_prompt_str)
-            rendered_rule_prompt = template.render(**dep_ctx_dict)
+            async for chunk in ToolCenter.run_tool(
+                name=self.rule_config.tool, **tool_params
+            ):
+                if self.rule_config.tool_result_target == "DIRECT_RETURN":
+                    yield chunk
+                response_full += chunk
         except Exception as e:
-            logger.error(
-                f"Error rendering prompt template for task {self.task_id}: {e}"
-            )
+            logger.error(f"Tool {self.rule_config.tool} execution failed: {e}")
             self.set_completed(True, success=False)
-            yield f"Error: Prompt rendering failed for rule related to: {self.rule_config.name if hasattr(self.rule_config, 'name') else self.task_id}"
-            return  # Stop execution if prompt fails
+            yield f"Error: Tool {self.rule_config.tool} execution failed: {e}"
+            return
 
-        final_system_prompt = base_system_prompt + "\n\n" + rendered_rule_prompt
-        logger.debug(f"Final system prompt: {final_system_prompt}")
-
-        # 2. Call LLM (if prompt is not empty - some rules might just be for ctx manipulation or flow control)
-        llm_response_full = ""
-        if (
-            rendered_rule_prompt.strip()
-        ):  # Only call LLM if there is a substantial prompt
-            try:
-                async for chunk in llm_client.invoke_stream(
-                    system_prompt=final_system_prompt,
-                    user_input=user_input_for_llm,  # The original user input is the main prompt to LLM here
-                ):
-                    if self.rule_config.ai_response_target == "DIRECT_RETURN":
-                        yield chunk
-                    llm_response_full += chunk
-            except Exception as e:
-                logger.error(
-                    f"LLM call failed for task {self.task_id}: {e}", exc_info=True
-                )
-                self.set_completed(True, success=False)
-                # Optionally, yield an error message to the user for DIRECT_RETURN rules
-                if self.rule_config.ai_response_target == "DIRECT_RETURN":
-                    yield f"Error: LLM interaction failed for: {self.rule_config.name if hasattr(self.rule_config, 'name') else self.task_id}. Please check logs."
-                return  # Stop if LLM fails
-        else:
-            logger.debug(
-                f"Skipping LLM call for task {self.task_id} as rendered rule prompt is empty."
+        # 3. 处理工具调用结果
+        try:
+            await self._handle_tool_result(ctx, dispatcher, response_full)
+        except Exception as e:
+            logger.error(f"Tool {self.rule_config.tool} result handling failed: {e}")
+            self.set_completed(True, success=False)
+            yield f"Error: Tool {self.rule_config.tool} result handling failed: {e}"
+            return
+        finally:
+            self.set_completed(True, success=True)
+            logger.info(
+                f"Task {self.task_id} (Name: {self.rule_config.name if hasattr(self.rule_config, 'name') else 'N/A'}) finished execution."
             )
-
-        # 3. Process LLM response
-        if self.rule_config.ai_response_target == "AS_CONTEXT":
-            if self.rule_config.ai_response_key:
-                await ctx.set(self.rule_config.ai_response_key, llm_response_full)
-                logger.debug(
-                    f"Task {self.task_id} stored LLM response in ctx key '{self.rule_config.ai_response_key}'"
-                )
-            else:
-                logger.warning(
-                    f"Task {self.task_id} is AS_CONTEXT but no ai_response_key is defined."
-                )
-        elif self.rule_config.ai_response_target == "NEW_RULES":
-            # 4. Handle dynamic rule generation (example, needs defining in RuleConfig)
-            new_rule_configs = RuleConfig.create_from(llm_response_full)
-            for new_cfg in new_rule_configs:
-                logger.debug(f"Task {self.task_id} generated new rule: {new_cfg.name}")
-                dispatcher.add_new_rule(new_cfg, immediate=True)
-        elif self.rule_config.ai_response_target == "DIRECT_RETURN":
-            # 将 AI 的回复保存到上下文中
-            await ctx.append("dialogue.history", f"A: {llm_response_full}")
-
-        # 5. Mark task as completed
-        self.set_completed(True, success=True)  # Mark as completed successfully
-        logger.debug(
-            f"Task {self.task_id} (Name: {self.rule_config.name if hasattr(self.rule_config, 'name') else 'N/A'}) finished execution."
-        )
-
         # Ensure an empty yield if this was a DIRECT_RETURN and loop finished, or if it wasn't DIRECT_RETURN
         # This satisfies the AsyncGenerator type hint if no chunks were yielded.
         if False:  # Logic to make this a generator even if no yield occurred above
