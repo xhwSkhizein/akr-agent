@@ -60,78 +60,116 @@ class OpenAIClient(LLMClient):
         params = self._prepare_params(system_prompt, user_input, **kwargs)
         params["stream"] = True
 
-        try:
-            logging.debug(f"OPENAI final request params: {params}")
-            response_stream: AsyncGenerator[ChatCompletion, None] = (
-                await self.client.chat.completions.create(**params)
-            )
+        max_retries = 3
+        retry_count = 0
+        backoff_factor = 2
 
-            # async for chunk in response_stream:
-            #     if chunk.choices and chunk.choices[0].delta.content:
-            #         yield chunk.choices[0].delta.content
+        while retry_count <= max_retries:
+            try:
+                logging.debug(f"OPENAI final request params: {params}")
+                response_stream: AsyncGenerator[ChatCompletion, None] = (
+                    await self.client.chat.completions.create(**params)
+                )
+                # 2. 处理流
+                function_call_buffer = {}
+                collecting_function_call = False
+                async for chunk in response_stream:
+                    delta = chunk.choices[0].delta
 
-            # 2. 处理流
-            function_call_buffer = {}
-            collecting_function_call = False
-            async for chunk in response_stream:
-                delta = chunk.choices[0].delta
+                    # 2.1 处理 function_call
+                    if hasattr(delta, "function_call") and delta.function_call:
+                        collecting_function_call = True
+                        for k, v in delta.function_call.items():
+                            function_call_buffer[k] = (
+                                function_call_buffer.get(k, "") + v
+                            )
 
-                # 2.1 处理 function_call
-                if hasattr(delta, "function_call") and delta.function_call:
-                    collecting_function_call = True
-                    for k, v in delta.function_call.items():
-                        function_call_buffer[k] = function_call_buffer.get(k, "") + v
-
-                    # function_call 结束条件：arguments 字段已完整
-                    if (
-                        "name" in function_call_buffer
-                        and "arguments" in function_call_buffer
-                        and delta.function_call.get("arguments") is not None
-                    ):
-                        # 2.2 工具调用
-                        tool_name = function_call_buffer["name"]
-                        tool_args = function_call_buffer["arguments"]
-                        logger.info(f"开始调用工具: {tool_name}, 参数: {tool_args}")
-                        run_tool_func = kwargs.get("run_tool_func")
-                        tool_result = await run_tool_func(tool_name, tool_args)
-                        logger.info(
-                            f"工具 name:{tool_name}, args: {tool_args} 调用结果: {tool_result}"
-                        )
-                        # 2.3 把工具结果作为新的 message 继续对话
-                        params["messages"].append(
-                            {
-                                "role": "assistant",
-                                "content": None,
-                                "function_call": {
-                                    "name": tool_name,
-                                    "arguments": tool_args,
-                                },
-                            }
-                        )
-                        params["messages"].append(
-                            {
-                                "role": "function",
-                                "name": tool_name,
-                                "content": str(tool_result),
-                            }
-                        )
-                        # 递归调用自身，继续流式输出
-                        async for content in self.invoke_stream(
-                            system_prompt, user_input, **params
+                        # function_call 结束条件：arguments 字段已完整
+                        if (
+                            "name" in function_call_buffer
+                            and "arguments" in function_call_buffer
+                            and delta.function_call.get("arguments") is not None
                         ):
-                            yield content
-                        return  # 结束本轮
-                elif hasattr(delta, "content") and delta.content:
-                    # 普通内容流式输出
-                    yield delta.content
-            # 3. 如果没有 function_call，直接结束
-            if collecting_function_call and function_call_buffer:
-                # 可能 function_call 没有完整返回
-                yield f"[Function call incomplete: {function_call_buffer}]"
+                            # 2.2 工具调用
+                            tool_name = function_call_buffer["name"]
+                            tool_args = function_call_buffer["arguments"]
+                            logger.info(f"开始调用工具: {tool_name}, 参数: {tool_args}")
+                            run_tool_func = kwargs.get("run_tool_func")
+                            tool_result = await run_tool_func(tool_name, tool_args)
+                            logger.info(
+                                f"工具 name:{tool_name}, args: {tool_args} 调用结果: {tool_result}"
+                            )
+                            # 2.3 把工具结果作为新的 message 继续对话
+                            params["messages"].append(
+                                {
+                                    "role": "assistant",
+                                    "content": None,
+                                    "function_call": {
+                                        "name": tool_name,
+                                        "arguments": tool_args,
+                                    },
+                                }
+                            )
+                            params["messages"].append(
+                                {
+                                    "role": "function",
+                                    "name": tool_name,
+                                    "content": str(tool_result),
+                                }
+                            )
+                            # 递归调用自身，继续流式输出
+                            async for content in self.invoke_stream(
+                                system_prompt, user_input, **params
+                            ):
+                                yield content
+                            return  # 结束本轮
+                    elif hasattr(delta, "content") and delta.content:
+                        # 普通内容流式输出
+                        yield delta.content
+                # 3. 如果没有 function_call，直接结束
+                if collecting_function_call and function_call_buffer:
+                    # 可能 function_call 没有完整返回
+                    yield f"[Function call incomplete: {function_call_buffer}]"
 
-        except Exception as e:
-            logging.error(f"OpenAI API 流式调用失败: {e}")
-            yield f"错误: {str(e)}"
+            except openai.RateLimitError as e:
+                retry_count += 1
+                if retry_count <= max_retries:
+                    wait_time = backoff_factor**retry_count
+                    logger.warning(
+                        f"Rate limit exceeded. Retrying in {wait_time}s. Attempt {retry_count}/{max_retries}"
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    yield f"错误: API速率限制超出，请稍后再试。"
+
+            except openai.AuthenticationError:
+                logger.error("OpenAI API认证失败，请检查API密钥")
+                yield "错误: API认证失败，请检查API密钥配置。"
+                break
+
+            except (openai.APIConnectionError, asyncio.TimeoutError) as e:
+                retry_count += 1
+                if retry_count <= max_retries:
+                    wait_time = backoff_factor**retry_count
+                    logger.warning(
+                        f"连接错误: {e}. 将在{wait_time}秒后重试. 尝试 {retry_count}/{max_retries}"
+                    )
+                    await asyncio.sleep(wait_time)
+                    continue
+                else:
+                    yield f"错误: 连接OpenAI API失败: {e}"
+
+            except asyncio.CancelledError:
+                logger.info("OpenAI API请求被取消")
+                break
+
+            except Exception as e:
+                logger.error(f"OpenAI API调用未预期错误: {e}", exc_info=True)
+                yield f"错误: {str(e)}"
+                break
+            # 如果没有异常，退出重试循环
+            break
 
     def _prepare_params(
         self, system_prompt: str, prompt: str, **kwargs

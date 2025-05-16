@@ -4,7 +4,7 @@ import os
 logger = logging.getLogger(__name__)
 
 from typing import Any, AsyncGenerator, Dict, List
-from jinja2 import Environment, select_autoescape
+from jinja2 import Environment, select_autoescape, TemplateError
 
 # Setup Jinja2 environment
 # You might want to move this to a more central place if used elsewhere
@@ -79,23 +79,36 @@ class LLMCallTool(Tool):
     async def _render_prompt(
         self, system_prompt: str, prompt: str, prompt_detail: str, **kwargs
     ) -> str:
-        if prompt or prompt_detail:
-            if prompt:
-                system_prompt = system_prompt + "\n\n" + prompt
-            if prompt_detail:
-                system_prompt += "\n\n" + prompt_detail
+        if not (prompt or prompt_detail):
+            return system_prompt
 
-            ctx: ObservableCtx = kwargs.get("ctx")
-            rule_config: RuleConfig = kwargs.get("rule_config")
-            custom_render_ctx = {k: ctx.get(k) for k in rule_config.depend_ctx_key}
-            try:
-                template = jinja_env.from_string(system_prompt)
-                system_prompt = template.render(**custom_render_ctx)
-            except Exception as e:
-                logger.error(
-                    f"Error rendering prompt template for task {self.task_id}: {e}"
-                )
-                system_prompt = system_prompt + "\n\n" + prompt
+        if prompt:
+            system_prompt = system_prompt + "\n\n" + prompt
+        if prompt_detail:
+            system_prompt += "\n\n" + prompt_detail
+
+        ctx: ObservableCtx = kwargs.get("ctx")
+        rule_config: RuleConfig = kwargs.get("rule_config")
+
+        if not ctx:
+            return system_prompt
+
+        custom_render_ctx = (
+            {k: ctx.get(k) for k in rule_config.depend_ctx_key}
+            if rule_config.depend_ctx_key
+            else ctx.to_dict()
+        )
+        try:
+            template = jinja_env.from_string(system_prompt)
+            system_prompt = template.render(**custom_render_ctx)
+        except TemplateError as e:
+            logger.error(f"模板渲染错误: {e}", exc_info=True)
+            # 降级策略：返回未渲染的提示
+            system_prompt = system_prompt + "\n\n[注意: 模板渲染失败]"
+        except Exception as e:
+            logger.error(
+                f"Error rendering prompt template for rule: {rule_config.name}: {e}"
+            )
 
         return system_prompt
 

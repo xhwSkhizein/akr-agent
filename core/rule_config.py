@@ -1,8 +1,12 @@
 import json
 import os
 import time
+import logging
+
 from typing import Optional, Literal, List, Dict, Any
 from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
 
 
 class AgentMeta(BaseModel):
@@ -82,19 +86,35 @@ class RuleConfig(BaseModel):
     ) -> List["RuleConfig"]:
         # 解析 llm_response_full 并生成新的规则
         try:
+            # 尝试直接解析完整JSON
             json_data = json.loads(tool_result_full, strict=False)
-        except json.JSONDecodeError as e:
-            json_data = json.loads(find_json_in_str(tool_result_full), strict=False)
-            if json_data is None:
-                raise ValueError(f"Invalid JSON data: {tool_result_full}")
+        except json.JSONDecodeError:
+            # 尝试从文本中提取JSON
+            try:
+                json_str = cls._find_json_in_str(tool_result_full)
+                if not json_str:
+                    logger.error(f"无法从结果中提取JSON: {tool_result_full[:100]}...")
+                    return []
+
+                json_data = json.loads(json_str, strict=False)
+            except json.JSONDecodeError as e:
+                logger.error(
+                    f"JSON解析失败: {e}, 原始内容: {tool_result_full[:100]}..."
+                )
+                return []
         result = []
-        if isinstance(json_data, list):
-            result = [cls(**item) for item in json_data]
-        elif isinstance(json_data, dict):
-            result = [cls(**json_data)]
-        else:
-            raise ValueError(f"Invalid JSON data: {tool_result_full}")
-        if save:
+        try:
+            if isinstance(json_data, list):
+                result = [cls(**item) for item in json_data]
+            elif isinstance(json_data, dict):
+                result = [cls(**json_data)]
+            else:
+                raise ValueError(f"Invalid JSON data: {tool_result_full}")
+        except (TypeError, ValueError) as e:
+            logger.error(f"Invalid JSON data: {tool_result_full}")
+            return []
+
+        if save and len(result) > 0:
             for rule_config in result:
                 save_rule_config(source=source, rule_config=rule_config)
 

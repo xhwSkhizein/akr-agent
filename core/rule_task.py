@@ -1,6 +1,8 @@
 import logging
 from typing import TYPE_CHECKING, AsyncGenerator, List
-
+import json
+import time
+import asyncio
 from core.tools.base import ToolCenter
 
 from core.rule_config import RuleConfig
@@ -120,45 +122,128 @@ class RuleTask:
                 new_cfg.auto_generated = True
                 dispatcher.add_new_rule(new_cfg, immediate=True)
 
+    async def _record_metrics(self, execution_time: float, error_occurred: bool):
+        """记录任务执行指标"""
+        # 这里可以实现指标记录逻辑，如将执行时间、成功/失败状态等记录到监控系统
+        pass
+
     async def execute_tool(
         self, ctx: ObservableCtx, dispatcher: "RuleDispatcher"
     ) -> AsyncGenerator[str, None]:
         """
         执行工具调用
         """
-        # 1. 准备工具调用参数
-        tool_params: dict = await self._prepare_tool_params(ctx)
-        logger.info(f"Tool params[after prepare]: {tool_params}")
-
-        # 2. 执行工具调用
+        # 记录开始执行时间，用于监控和超时处理
+        start_time = time.time()
+        error_occurred = False
         response_full = ""
-        try:
-            async for chunk in ToolCenter.run_tool(
-                name=self.rule_config.tool, **tool_params
-            ):
-                if self.rule_config.tool_result_target == "DIRECT_RETURN":
-                    yield chunk
-                response_full += chunk
-        except Exception as e:
-            logger.error(f"Tool {self.rule_config.tool} execution failed: {e}")
-            self.set_completed(True, success=False)
-            yield f"Error: Tool {self.rule_config.tool} execution failed: {e}"
-            return
 
-        # 3. 处理工具调用结果
         try:
-            await self._handle_tool_result(ctx, dispatcher, response_full)
+            # 1. 准备工具调用参数
+            try:
+                tool_params: dict = await self._prepare_tool_params(ctx)
+                logger.info(f"Task {self.task_id}: Tool params prepared: {tool_params}")
+            except Exception as e:
+                logger.error(
+                    f"Task {self.task_id}: Failed to prepare tool parameters: {e}"
+                )
+                error_occurred = True
+                yield f"Error: Failed to prepare parameters for tool {self.rule_config.tool}: {e}"
+                return
+
+            # 2. 执行工具调用（带重试逻辑）
+            max_retries = 2  # 可配置, self.rule_config.max_retries
+            retry_count = 0
+            last_error = None
+
+            while retry_count < max_retries:
+                try:
+                    async for chunk in ToolCenter.run_tool(
+                        name=self.rule_config.tool, **tool_params
+                    ):
+                        if self.rule_config.tool_result_target == "DIRECT_RETURN":
+                            yield chunk
+                        response_full += chunk
+
+                    # 工具执行成功，跳出重试循环
+                    break
+
+                except asyncio.CancelledError:
+                    # 特殊处理取消操作，不计入重试次数
+                    logger.warning(f"Task {self.task_id}: Tool execution was cancelled")
+                    error_occurred = True
+                    yield f"Tool execution was cancelled"
+                    return
+
+                except (ConnectionError, TimeoutError) as e:
+                    # 网络或超时错误，可以重试
+                    retry_count += 1
+                    last_error = e
+                    logger.warning(
+                        f"Task {self.task_id}: Tool execution failed (attempt {retry_count}/{max_retries}): {e}"
+                    )
+                    # 指数退避重试
+                    await asyncio.sleep(min(2**retry_count, 10))
+
+                except Exception as e:
+                    # 其他错误，不重试
+                    logger.error(
+                        f"Task {self.task_id}: Tool {self.rule_config.tool} execution failed: {e}"
+                    )
+                    error_occurred = True
+                    yield f"Error: Tool {self.rule_config.tool} execution failed: {e}"
+                    return
+
+            # 检查是否达到最大重试次数
+            if retry_count == max_retries:
+                logger.error(
+                    f"Task {self.task_id}: Tool {self.rule_config.tool} execution failed after {max_retries} attempts: {last_error}"
+                )
+                error_occurred = True
+                yield f"Error: Tool {self.rule_config.tool} execution failed after multiple attempts: {last_error}"
+                return
+
+            # 3. 处理工具调用结果
+            try:
+                await self._handle_tool_result(ctx, dispatcher, response_full)
+            except json.JSONDecodeError as e:
+                # 特殊处理JSON解析错误
+                logger.error(
+                    f"Task {self.task_id}: Failed to parse tool result as JSON: {e}"
+                )
+                error_occurred = True
+                yield f"Error: Failed to process tool result (invalid format): {e}"
+            except Exception as e:
+                logger.error(
+                    f"Task {self.task_id}: Tool {self.rule_config.tool} result handling failed: {e}"
+                )
+                error_occurred = True
+                yield f"Error: Tool {self.rule_config.tool} result handling failed: {e}"
+
         except Exception as e:
-            logger.error(f"Tool {self.rule_config.tool} result handling failed: {e}")
-            self.set_completed(True, success=False)
-            yield f"Error: Tool {self.rule_config.tool} result handling failed: {e}"
-            return
-        finally:
-            self.set_completed(True, success=True)
-            logger.info(
-                f"Task {self.task_id} (Name: {self.rule_config.name if hasattr(self.rule_config, 'name') else 'N/A'}) finished execution."
+            # 捕获所有未处理的异常
+            logger.error(
+                f"Task {self.task_id}: Unexpected error in execute_tool: {e}",
+                exc_info=True,
             )
-        # Ensure an empty yield if this was a DIRECT_RETURN and loop finished, or if it wasn't DIRECT_RETURN
-        # This satisfies the AsyncGenerator type hint if no chunks were yielded.
-        if False:  # Logic to make this a generator even if no yield occurred above
-            yield
+            error_occurred = True
+            yield f"Error: Unexpected error occurred: {e}"
+
+        finally:
+            # 正确设置任务状态，保持一致性
+            execution_time = time.time() - start_time
+            self.set_completed(True, success=not error_occurred)
+            self.set_executing(False)
+
+            # 记录执行结果
+            if error_occurred:
+                logger.error(
+                    f"Task {self.task_id} completed with errors in {execution_time:.2f}s"
+                )
+            else:
+                logger.info(
+                    f"Task {self.task_id} completed successfully in {execution_time:.2f}s"
+                )
+
+            # 可选：记录性能指标
+            await self._record_metrics(execution_time, error_occurred)
