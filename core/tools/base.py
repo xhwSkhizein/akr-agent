@@ -223,65 +223,6 @@ class ToolCenter:
 
         return schema
 
-    # def get_definition(name: str) -> Optional[Dict[str, Any]]:
-    #     """
-    #     获取工具定义
-    #     """
-    #     """
-    #     动态构建 OpenAI function call 工具定义
-    #     """
-    #     tool = ToolCenter.get(name)
-    #     if tool is None:
-    #         return None
-
-    #     # 1. 获取函数对象
-    #     if hasattr(tool, "run"):
-    #         func = tool.run
-    #     elif callable(tool):
-    #         func = tool
-    #     else:
-    #         return None
-
-    #     # 2. 获取签名
-    #     sig = inspect.signature(func)
-    #     params = []
-    #     properties = {}
-    #     required = []
-    #     for pname, param in sig.parameters.items():
-    #         if pname in ("self", "cls", "args", "kwargs"):
-    #             continue
-    #         # 类型推断
-    #         ptype = "string"
-    #         if param.annotation in (int, "int"):
-    #             ptype = "integer"
-    #         elif param.annotation in (float, "float"):
-    #             ptype = "number"
-    #         elif param.annotation in (bool, "bool"):
-    #             ptype = "boolean"
-    #         elif param.annotation in (dict, "dict"):
-    #             ptype = "object"
-    #         elif param.annotation in (list, "list"):
-    #             ptype = "array"
-    #         # 参数描述
-    #         desc = ""
-    #         if param.annotation and hasattr(param.annotation, "__doc__"):
-    #             desc = param.annotation.__doc__ or ""
-    #         properties[pname] = {"type": ptype, "description": desc}
-    #         if param.default is inspect.Parameter.empty:
-    #             required.append(pname)
-
-    #     # 3. 获取描述
-    #     doc = func.__doc__ or ""
-    #     schema = {
-    #         "name": name,
-    #         "description": doc.strip().split("\n")[0] if doc else name,
-    #         "parameters": {
-    #             "type": "object",
-    #             "properties": properties,
-    #             "required": required,
-    #         },
-    #     }
-    #     return schema
 
     @staticmethod
     async def run_tool(name: str, *args, **kwargs) -> AsyncGenerator[str, None]:
