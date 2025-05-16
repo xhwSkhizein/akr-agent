@@ -7,6 +7,7 @@ from core.rule_task import RuleTask
 from core.rule_config import RuleConfig
 from core.observable_ctx import ObservableCtx
 from core.event_bus import EventBus
+from core.task_state import TaskState, TaskStateTransitionError
 
 
 @pytest.fixture
@@ -55,43 +56,133 @@ class TestRuleTask:
         assert rule_task.task_id == "test_task_id"
         assert not rule_task.is_completed()
         assert not rule_task.is_executing()
+        assert rule_task.get_state() == TaskState.PENDING
 
-    def test_state_management(self, rule_task):
+    @pytest.mark.asyncio
+    async def test_state_management(self, rule_task):
         """测试状态管理"""
         # 初始状态
         assert not rule_task.is_completed()
         assert not rule_task.is_executing()
+        assert rule_task.get_state() == TaskState.PENDING
         
-        # 设置执行中
-        rule_task.set_executing(True)
-        assert rule_task.is_executing()
-        
-        # 设置已完成
-        rule_task.set_completed(True, success=True)
-        assert rule_task.is_completed()
-        
-        # 重置执行中状态
-        rule_task.set_executing(False)
+        # 测试状态转换
+        await rule_task.set_state(TaskState.READY)
+        assert rule_task.get_state() == TaskState.READY
+        assert not rule_task.is_completed()
         assert not rule_task.is_executing()
+        assert rule_task.is_ready()
+        
+        # 转换到执行中
+        await rule_task.set_state(TaskState.EXECUTING)
+        assert rule_task.get_state() == TaskState.EXECUTING
+        assert rule_task.is_executing()
+        assert not rule_task.is_completed()
+        
+        # 转换到完成
+        await rule_task.set_state(TaskState.COMPLETED, success=True)
+        assert rule_task.get_state() == TaskState.COMPLETED
+        assert rule_task.is_completed()
+        assert not rule_task.is_executing()
+        
+        # 测试无效转换
+        with pytest.raises(TaskStateTransitionError):
+            await rule_task.set_state(TaskState.EXECUTING)
+            
+        # 测试兼容方法
+        # 创建新任务测试兼容方法
+        new_task = RuleTask(rule_config=rule_task.rule_config, task_id="compat_test")
+        
+        # 使用兼容方法设置执行状态
+        new_task.set_executing(True)
+        
+        # 等待异步转换完成 - 需要更长的时间
+        for _ in range(10):  # 尝试最多10次，每次等待0.1秒
+            await asyncio.sleep(0.1)
+            if new_task.is_executing():
+                break
+                
+        # 验证状态已经正确转换
+        assert new_task.is_executing()
+        assert new_task.get_state() == TaskState.EXECUTING
 
-    def test_condition_evaluation(self, rule_task, observable_ctx):
-        """测试条件评估"""
-        # 条件不满足
+    @pytest.mark.asyncio
+    async def test_condition_evaluation(self, rule_task, observable_ctx):
+        """测试条件评估 - 实例方法"""
+        # 测试实例方法 is_condition_meet
+        
+        # 初始状态下条件不满足（因为上下文中没有相应的值）
         assert not rule_task.is_condition_meet(observable_ctx)
         
         # 设置上下文使条件满足
         observable_ctx["test_key"] = "test_value"
         assert rule_task.is_condition_meet(observable_ctx)
         
-        # 设置任务为已完成，条件应该不再满足
-        rule_task.set_completed(True)
+        # 设置任务为已完成，条件应该不再满足（因为已完成的任务不应再执行）
+        await rule_task.set_state(TaskState.READY)
+        await rule_task.set_state(TaskState.EXECUTING)
+        await rule_task.set_state(TaskState.COMPLETED, success=True)
         assert not rule_task.is_condition_meet(observable_ctx)
         
-        # 重置任务状态
-        rule_task.set_completed(False)
-        rule_task.set_executing(True)
-        # 设置为执行中，条件应该不再满足
-        assert not rule_task.is_condition_meet(observable_ctx)
+        # 创建新任务测试执行中状态
+        new_task = RuleTask(rule_config=rule_task.rule_config, task_id="executing_test")
+        await new_task.set_state(TaskState.READY)
+        await new_task.set_state(TaskState.EXECUTING)
+        # 设置为执行中，条件应该不再满足（因为正在执行的任务不应再次执行）
+        assert not new_task.is_condition_meet(observable_ctx)
+        
+    @pytest.mark.asyncio
+    async def test_check_rule_condition(self, rule_task, observable_ctx, sample_rule_config):
+        """测试规则条件检查 - 类方法"""
+        # 测试类方法 check_rule_condition
+        
+        # 初始状态下条件不满足（因为上下文中没有相应的值）
+        assert not RuleTask.check_rule_condition(sample_rule_config, observable_ctx)
+        
+        # 设置上下文使条件满足
+        observable_ctx["test_key"] = "test_value"
+        assert RuleTask.check_rule_condition(sample_rule_config, observable_ctx)
+        
+        # 测试没有条件的规则配置
+        no_condition_rule = RuleConfig(
+            name="no_condition_rule",
+            depend_ctx_key=["test_key"],
+            match_condition="",  # 空条件
+            prompt="测试提示",
+            tool="echo",
+            tool_params={},
+            tool_result_target="DIRECT_RETURN",
+            tool_result_key=None
+        )
+        # 没有条件的规则应该默认满足
+        assert RuleTask.check_rule_condition(no_condition_rule, observable_ctx)
+        
+    def test_check_condition_static_method(self, observable_ctx):
+        """测试条件检查静态方法"""
+        # 测试静态方法 check_condition
+        
+        # 准备测试数据
+        log_id = "test_condition"
+        
+        # 测试简单条件
+        observable_ctx["simple_key"] = "simple_value"
+        assert RuleTask.check_condition("'simple_key' in ctx and ctx.get('simple_key') == 'simple_value'", observable_ctx, log_id)
+        assert not RuleTask.check_condition("'simple_key' in ctx and ctx.get('simple_key') == 'wrong_value'", observable_ctx, log_id)
+        
+        # 测试复杂条件
+        observable_ctx["num1"] = 10
+        observable_ctx["num2"] = 20
+        assert RuleTask.check_condition("'num1' in ctx and 'num2' in ctx and ctx.get('num1') + ctx.get('num2') > 25", observable_ctx, log_id)
+        assert not RuleTask.check_condition("'num1' in ctx and 'num2' in ctx and ctx.get('num1') + ctx.get('num2') < 25", observable_ctx, log_id)
+        
+        # 测试空条件
+        assert RuleTask.check_condition("", observable_ctx, log_id)
+        
+        # 测试无效条件（语法错误）
+        assert not RuleTask.check_condition("this is invalid python code!!!", observable_ctx, log_id)
+        
+        # 测试异常情况（引用不存在的变量）
+        assert not RuleTask.check_condition("non_existent_var > 10", observable_ctx, log_id)
 
     @pytest.mark.asyncio
     async def test_prepare_tool_params(self, rule_task, observable_ctx):
@@ -177,6 +268,10 @@ class TestRuleTask:
         # 创建模拟调度器
         mock_dispatcher = MagicMock()
         
+        # 先设置任务状态为 READY 和 EXECUTING
+        await rule_task.set_state(TaskState.READY)
+        await rule_task.set_state(TaskState.EXECUTING)
+        
         # 模拟工具执行
         async def mock_run_tool(*args, **kwargs):
             yield "成功执行"
@@ -193,12 +288,17 @@ class TestRuleTask:
             # 验证任务状态
             assert rule_task.is_completed()
             assert not rule_task.is_executing()
+            assert rule_task.get_state() == TaskState.COMPLETED
 
     @pytest.mark.asyncio
     async def test_execute_tool_error(self, rule_task, observable_ctx):
         """测试执行工具 - 错误"""
         # 创建模拟调度器
         mock_dispatcher = MagicMock()
+        
+        # 先设置任务状态为 READY 和 EXECUTING
+        await rule_task.set_state(TaskState.READY)
+        await rule_task.set_state(TaskState.EXECUTING)
         
         # 模拟工具执行失败
         async def mock_run_tool(*args, **kwargs):
@@ -219,12 +319,17 @@ class TestRuleTask:
             # 验证任务状态
             assert rule_task.is_completed()
             assert not rule_task.is_executing()
+            assert rule_task.get_state() == TaskState.FAILED
 
     @pytest.mark.asyncio
     async def test_execute_tool_retry(self, rule_task, observable_ctx):
         """测试执行工具 - 重试"""
         # 创建模拟调度器
         mock_dispatcher = MagicMock()
+        
+        # 先设置任务状态为 READY 和 EXECUTING
+        await rule_task.set_state(TaskState.READY)
+        await rule_task.set_state(TaskState.EXECUTING)
         
         # 模拟工具执行 - 第一次失败，第二次成功
         retry_count = 0
@@ -248,6 +353,7 @@ class TestRuleTask:
             # 验证任务状态
             assert rule_task.is_completed()
             assert not rule_task.is_executing()
+            assert rule_task.get_state() == TaskState.COMPLETED
             
             # 验证重试次数
             assert retry_count == 1

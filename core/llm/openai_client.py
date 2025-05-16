@@ -7,7 +7,8 @@ import logging
 logger = logging.getLogger(__name__)
 
 from typing import Any, AsyncGenerator, Dict, Optional
-
+import openai
+import asyncio
 from openai import AsyncOpenAI
 from openai.types.chat.chat_completion import ChatCompletion
 

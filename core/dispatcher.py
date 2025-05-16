@@ -1,13 +1,14 @@
 import asyncio
 import logging
 import uuid
-from typing import List, Dict, Set, Any, AsyncGenerator
+import time
+from typing import List, Dict, Set, Any, AsyncGenerator, Optional
 
 from core.rule_config import RuleConfig
-
 from core.event_bus import EventBus
 from core.observable_ctx import ObservableCtx
 from core.rule_task import RuleTask
+from core.task_state import TaskState
 
 
 logger = logging.getLogger(__name__)
@@ -16,177 +17,434 @@ logger = logging.getLogger(__name__)
 class RuleDispatcher:
 
     def __init__(
-        self, initial_rules: List[RuleConfig], event_bus: EventBus, ctx: ObservableCtx
+        self,
+        initial_rules: List[RuleConfig] = None,
+        event_bus: Optional[EventBus] = None,
+        ctx: Optional[ObservableCtx] = None,
+        max_concurrent_tasks: int = 10,
+        deadlock_detection_time: int = 30,
     ):
-        self._event_bus = event_bus
-        self._ctx = ctx
+        """初始化规则调度器"""
+        self._event_bus = event_bus or EventBus()
+        self._ctx = ctx or ObservableCtx()
+        
+        # 规则和任务管理
+        self._rule_configs: Dict[str, RuleConfig] = {}  # 存储所有规则配置: rule_id -> RuleConfig
+        self._tasks: Dict[str, RuleTask] = {}  # 存储已创建的任务: task_id -> RuleTask
+        self._active_task_executions: Set[asyncio.Task] = set()  # 存储活动的任务执行协程
+        
+        # 并发控制
+        self._max_concurrent_tasks = max_concurrent_tasks
+        self._task_semaphore = asyncio.Semaphore(max_concurrent_tasks)
+        
+        # 规则优先级和活动跟踪
+        self._rule_priorities: Dict[str, int] = {}  # 规则优先级: rule_id -> priority
+        # 任务最后活动时间: task_id -> timestamp
+        self._task_last_activity: Dict[str, float] = {}  # 任务最后活动时间: task_id -> timestamp
+        
+        # 死锁检测
+        self._deadlock_detection_time = deadlock_detection_time
+        
+        # 输出队列
+        self._output_queue = asyncio.Queue()
+        
+        # 订阅上下文变化事件
+        self._event_bus.subscribe("ctx_changed", self._handle_ctx_changed)
+        
+        # 初始化规则
+        if initial_rules:
+            for rule_config in initial_rules:
+                self.add_new_rule(rule_config)
+    
+    def _generate_rule_id(self, rule_name: str) -> str:
+        """生成唯一的规则ID"""
+        return f"{rule_name}_{str(uuid.uuid4())[:8]}"
 
-        # 通过ID存储所有任务
-        self._tasks: Dict[str, RuleTask] = {}
-        # 跟踪正在运行的asyncio任务
-        self._active_task_executions: Set[asyncio.Task] = set()
-        # 用于DIRECT_RETURN输出
-        self._output_queue: asyncio.Queue[str] = (
-            asyncio.Queue()
-        )  # 用于DIRECT_RETURN输出
-
-        # 订阅ctx_changed事件
-        self._event_bus.subscribe(
-            event_type="ctx_changed", callback=self._handle_ctx_changed
-        )
-        # 添加初始规则
-        for rule_config in initial_rules:
-            self.add_new_rule(rule_config)
-
-    def _generate_task_id(self) -> str:
-        return str(uuid.uuid4())
+    def _generate_task_id(self, rule_id: str) -> str:
+        """生成唯一的任务ID"""
+        return f"task_{rule_id}_{str(uuid.uuid4())[:8]}"
 
     def add_new_rule(self, rule_config: RuleConfig, immediate: bool = False) -> str:
-        task_id = self._generate_task_id()
-        task = RuleTask(rule_config, task_id)
-        self._tasks[task_id] = task
-        logger.info(
-            f"Added new rule task:\n {task_id} (Name: {rule_config.name if hasattr(rule_config, 'name') else 'N/A'}, Depend_ctx_key: {rule_config.depend_ctx_key}, Condition: {rule_config.match_condition})"
+        """添加新规则，返回任务ID"""
+        rule_id = self._generate_rule_id(rule_config.name)
+        
+        # 存储规则配置
+        self._rule_configs[rule_id] = rule_config
+        
+        # 设置优先级（如果有）
+        priority = getattr(rule_config, "priority", 0)
+        self._rule_priorities[rule_id] = priority
+        
+        logger.debug(
+            f"Added new rule: {rule_id} (Name: {rule_config.name}, "
+            f"Depend_ctx_key: {rule_config.depend_ctx_key}, "
+            f"Condition: {rule_config.match_condition}, Priority: {priority})"
         )
-        # 立即检查这个新规则是否可以调度
+        
+        # 如果需要立即检查，则检查条件并在满足时创建并调度任务
         if immediate:
-            self._check_and_schedule_task_if_needed(task)
-        return task_id
+            asyncio.create_task(self._check_and_create_task_if_needed(rule_id))
+            
+        return rule_id
 
     async def _handle_ctx_changed(self, event_data: Dict[str, Any]) -> None:
-        changed_key = event_data.get("key")
-        changed_value = self._ctx.get(changed_key)
-        logger.debug(
-            f"Ctx changed: key='{changed_key}', changed value: {changed_value}"
-        )
-        for task in self._tasks.values():
-            if task.is_completed() or task.is_executing():
-                # 只检查尚未完成或正在处理的任务
-                continue
-            if (
-                task.rule_config.depend_ctx_key is not None
-                and changed_key in task.rule_config.depend_ctx_key
-            ):
-                logger.debug(
-                    f"Task {task.task_id} depends on {changed_key}. Evaluating."
-                )
-                self._check_and_schedule_task_if_needed(task)
+        """处理上下文变化事件"""
+        changed_key = event_data['key']
+        changed_value = event_data['value']
+        old_value = event_data['old_value']
+        
+        logger.info(f"Ctx changed: key='{changed_key}', changed value: {changed_value}, old value: {old_value}")
+        
+        # 找出依赖于此键的所有规则
+        rules_to_check = []
+        for rule_id, rule_config in self._rule_configs.items():
+            # 检查规则是否依赖于变化的键
+            if changed_key in rule_config.depend_ctx_key:
+                logger.debug(f"Rule {rule_id} depends on {changed_key}. Evaluating.")
+                
+                # 更新最后活动时间
+                self._task_last_activity[rule_id] = time.time()
+                
+                # 添加到要检查的任务列表
+                priority = self._rule_priorities.get(rule_id, 0)
+                rules_to_check.append((priority, rule_id))
             else:
-                logger.debug(
-                    f"Task {task.task_id} does not depend on {changed_key}. Skipping."
-                )
+                logger.debug(f"Rule {rule_id} does not depend on {changed_key}. Skipping.")
+        
+        # 按优先级排序（从高到低）
+        rules_to_check.sort(key=lambda x: x[0], reverse=True)
+        
+        # 依次检查和调度任务
+        for _, rule_id in rules_to_check:
+            await self._check_and_create_task_if_needed(rule_id)
 
-    def _check_and_schedule_task_if_needed(self, task: RuleTask) -> None:
-        # 检查任务是否已经在执行中（避免重复调度）
-        if task.is_executing():
-            logger.debug(
-                f"Task {task.task_id} is already executing. Skipping scheduling."
-            )
+    async def _check_and_create_task_if_needed(self, rule_id: str) -> None:
+        """检查规则条件，如果满足则创建并调度任务"""
+        # 获取规则配置
+        rule_config = self._rule_configs.get(rule_id)
+        if not rule_config:
+            logger.warning(f"Rule config for rule {rule_id} not found.")
             return
+            
+        # 使用互斥锁防止竞态条件
+        # 创建一个规则特定的锁，如果不存在则创建
+        if not hasattr(self, '_rule_locks'):
+            self._rule_locks = {}
+            
+        if rule_id not in self._rule_locks:
+            self._rule_locks[rule_id] = asyncio.Lock()
+            
+        # 使用锁确保同一规则的检查和创建是原子的
+        async with self._rule_locks[rule_id]:
+            # 检查是否有该规则的任务正在执行
+            active_tasks = [task for task in self._tasks.values() 
+                        if task.rule_id == rule_id and task.is_executing()]
+            if active_tasks:
+                logger.debug(f"Rule {rule_id} already has active tasks. Skipping task creation.")
+                return
+                
+            # 使用类方法检查规则条件，无需创建临时任务对象
+            if not RuleTask.check_rule_condition(rule_config, self._ctx):
+                logger.debug(f"Rule {rule_id} does not meet the condition. Skipping task creation.")
+                return
+                
+            # 条件满足，创建新任务
+            task_id = self._generate_task_id(rule_id)
+            new_task = RuleTask(rule_config=rule_config, task_id=task_id, rule_id=rule_id)
+            self._tasks[task_id] = new_task
+            
+            # 记录任务创建信息
+            logger.info(f"Created new task {task_id} for rule {rule_id}")
+            
+            # 记录任务最后活动时间
+            self._task_last_activity[task_id] = time.time()
+            
+            # 调度任务执行
+            await self._schedule_task(new_task)
 
-        if not task.is_condition_meet(self._ctx):
-            logger.debug(
-                f"Task {task.task_id} is not meet the condition. Skipping scheduling."
-            )
+    async def _schedule_task(self, task: RuleTask) -> None:
+        """调度任务执行"""
+        # 尝试获取并发信号量，如果已达到最大并发数，则延迟调度
+        try:
+            # 非阻塞尝试获取信号量
+            if not self._task_semaphore.locked() or self._task_semaphore._value > 0:
+                # 还有信号量可用
+                await self._task_semaphore.acquire()
+            else:
+                # 没有信号量可用，延迟调度
+                logger.debug(f"Max concurrent tasks reached. Delaying task {task.task_id}")
+                return
+        except Exception as e:
+            logger.error(f"Error acquiring semaphore for task {task.task_id}: {e}")
             return
-
-        logger.debug(
-            f"Task {task.task_id} (Name: {task.rule_config.name if hasattr(task.rule_config, 'name') else 'N/A'}) is ready. Scheduling for execution."
-        )
-        task.set_executing(True)  # 标记为执行中
-
+            
+        # 设置任务状态为准备就绪
+        try:
+            await task.set_state(TaskState.READY)
+        except Exception as e:
+            logger.error(f"Error setting task {task.task_id} to READY state: {e}")
+            self._task_semaphore.release()  # 释放信号量
+            return
+            
+        # 设置任务状态为执行中
+        try:
+            await task.set_state(TaskState.EXECUTING)
+        except Exception as e:
+            logger.error(f"Error setting task {task.task_id} to EXECUTING state: {e}")
+            self._task_semaphore.release()  # 释放信号量
+            return
+            
+        logger.debug(f"Task {task.task_id} (Name: {task.rule_config.name}) is ready. Scheduling for execution.")
+        
+        # 准备执行协程
         execution_coro = task.execute_tool(ctx=self._ctx, dispatcher=self)
 
+        # 创建任务包装器
         async def task_wrapper():
+            timeout = getattr(task.rule_config, 'timeout', 60)  # 默认超时 60 秒
+            error_occurred = False
+            
             try:
-                async for output_chunk in execution_coro:
-                    await self._output_queue.put(output_chunk)
+                # 使用超时机制执行任务
+                try:
+                    # 在测试中，我们使用模拟的异步生成器，它们需要特殊处理
+                    # 不使用 wait_for 直接包装异步生成器，而是使用单独的超时检查
+                    start_time = time.time()
+                    
+                    async for output_chunk in execution_coro:
+                        # 检查是否超时
+                        if time.time() - start_time > timeout:
+                            raise asyncio.TimeoutError(f"Task execution timed out after {timeout} seconds")
+                            
+                        await self._output_queue.put(output_chunk)
+                        # 更新最后活动时间
+                        self._task_last_activity[task.task_id] = time.time()
+                except asyncio.TimeoutError:
+                    error_occurred = True
+                    logger.error(f"Task {task.task_id} timed out after {timeout} seconds")
+                    await self._output_queue.put(f"Error: Task execution timed out after {timeout} seconds")
             except Exception as e:
+                error_occurred = True
                 logger.error(f"Error executing task {task.task_id}: {e}", exc_info=True)
-                task.set_completed(True, success=False)  # 标记为完成但失败
+                try:
+                    # 尝试将任务设置为失败状态
+                    await task.set_state(TaskState.FAILED)
+                except Exception as state_error:
+                    logger.error(f"Error setting task state to FAILED: {state_error}")
             finally:
-                if (
-                    not task.is_completed()
-                ):  # 确保如果execute没有明确标记完成，则标记为完成
-                    task.set_completed(True, success=True)  # 如果没有异常则假设成功
-                task.set_executing(False)  # 取消执行中标记
-                # 检查其他任务是否因为此任务完成而变为就绪状态（例如，如果一个规则依赖于另一个规则的完成信号）
-                # 目前，ctx_changed事件是重新评估的主要触发器。
+                # 释放信号量
+                self._task_semaphore.release()
+                
+                # 确保任务状态一致
+                if not task.is_completed():
+                    try:
+                        # 如果任务还没有被标记为完成，则设置其状态
+                        if error_occurred:
+                            await task.set_state(TaskState.FAILED)
+                        else:
+                            await task.set_state(TaskState.COMPLETED, success=True)
+                    except Exception as state_error:
+                        logger.error(f"Error setting final task state: {state_error}")
 
+        # 创建并跟踪异步任务
         scheduled_async_task = asyncio.create_task(task_wrapper())
         self._active_task_executions.add(scheduled_async_task)
-        scheduled_async_task.add_done_callback(
-            self._active_task_executions.discard
-        )  # 完成时自动移除
+        scheduled_async_task.add_done_callback(self._active_task_executions.discard)  # 完成时自动移除
 
     async def get_output_stream(self) -> AsyncGenerator[str, None]:
         """
         提供最终输出的异步生成器。
         当没有任务正在运行，输出队列为空，
         且当前上下文下没有待处理的任务可以就绪时结束。
+        增强了死锁检测和终止检测。
         """
+        # 记录最后进展时间，用于死锁检测
+        last_progress_time = time.time()
+        # 记录最后检查死锁的时间
+        last_deadlock_check_time = time.time()
+        
         while True:
+            current_time = time.time()
+            
             # 首先尝试从输出队列获取项目
             try:
                 chunk = await asyncio.wait_for(self._output_queue.get(), timeout=0.05)
                 yield chunk
-                continue  # 成功获取到块，继续循环
+                # 成功获取到块，更新进展时间
+                last_progress_time = time.time()
+                continue
             except asyncio.TimeoutError:
                 # 在指定时间内输出队列为空或没有新的 chunk 到达
                 # 现在检查是否应该结束
-                pass  # 继续检查下面的结束条件
+                pass
             except asyncio.CancelledError:
                 logger.debug("Output stream cancelled.")
                 break
 
+            # 检查死锁情况 - 每 5 秒检查一次
+            if current_time - last_deadlock_check_time > 5:
+                # 检查长时间没有进展的任务
+                for task_id, last_activity_time in list(self._task_last_activity.items()):
+                    if task_id in self._tasks and not self._tasks[task_id].is_completed():
+                        # 检查任务是否长时间没有活动
+                        if current_time - last_activity_time > self._deadlock_detection_time:
+                            logger.warning(f"Task {task_id} has been inactive for {self._deadlock_detection_time} seconds. Possible deadlock.")
+                            # 可以在这里实现恢复策略，例如强制完成或重试任务
+                            try:
+                                # 尝试将长时间无活动的任务标记为失败
+                                if self._tasks[task_id].is_executing():
+                                    await self._tasks[task_id].set_state(TaskState.FAILED)
+                                    logger.warning(f"Marked stuck task {task_id} as FAILED")
+                            except Exception as e:
+                                logger.error(f"Error handling stuck task {task_id}: {e}")
+                
+                # 检查整体进展
+                if (current_time - last_progress_time > self._deadlock_detection_time and 
+                    self._active_task_executions and 
+                    not self._output_queue.empty()):
+                    # 长时间没有进展，但有活动任务和输出数据
+                    logger.warning(f"Potential deadlock detected. No progress for {self._deadlock_detection_time} seconds")
+                    # 可以在这里实现恢复策略
+                
+                # 更新最后检查时间
+                last_deadlock_check_time = current_time
+
             # 输出队列超时时检查结束条件：
-            # 条件1：当前是否有正在运行的 asyncio Task（规则执行包装器）？
+            # 条件1：当前是否有正在运行的 asyncio Task？
             if self._active_task_executions:
                 # 有活动任务，等待它们完成或上下文改变
-                logger.debug(
-                    "get_output_stream: Active tasks exist. Waiting for them to complete or context to change."
-                )
-                await asyncio.sleep(0.5)  # 让出控制权给事件循环
+                logger.debug("get_output_stream: Active tasks exist. Waiting for them to complete or context to change.")
+                await asyncio.sleep(0.1)  # 缩短等待时间，提高响应性
                 continue
 
             # 条件2：没有活动的asyncio Task。是否有就绪的RuleTask？
-            # RuleTask如果未完成且满足条件则为就绪状态
-            any_task_is_runnable = any(
-                not task.is_completed() and task.is_condition_meet(self._ctx)
-                for task in self._tasks.values()
-            )
-
-            if any_task_is_runnable:
+            runnable_tasks = []
+            for task_id, task in self._tasks.items():
+                if not task.is_completed() and task.is_condition_meet(self._ctx):
+                    priority = self._rule_priorities.get(task_id, 0)
+                    runnable_tasks.append((priority, task_id))
+            
+            # 按优先级排序
+            runnable_tasks.sort(key=lambda x: x[0], reverse=True)
+            
+            if runnable_tasks:
                 # 有就绪的任务但可能尚未被调度器选中
-                # （例如：上下文改变事件刚刚发生）
-                # 等待事件循环处理
-                logger.debug(
-                    "get_output_stream: No active executions, but a task is ready. Yielding briefly."
-                )
-                await asyncio.sleep(0.5)
+                logger.debug(f"get_output_stream: No active executions, but {len(runnable_tasks)} tasks are ready. Yielding briefly.")
+                # 尝试调度优先级最高的任务
+                if runnable_tasks and not self._task_semaphore.locked():
+                    _, task_id = runnable_tasks[0]
+                    task = self._tasks[task_id]
+                    await self._check_and_create_task_if_needed(task_id)
+                await asyncio.sleep(0.1)
+                # 更新进展时间
+                last_progress_time = time.time()
                 continue
 
-            # 条件3：没有活动的asyncio Task，输出队列为空（发生超时），
-            # 且当前上下文下没有可运行的RuleTask
-            # 这意味着所有任务都已完成，或者剩余任务在当前状态下无法继续
-            logger.debug(
-                "No active executions, output queue was empty, and no task is currently runnable. Ending stream."
-            )
-            break
+            # 条件3：没有活动的asyncio Task，输出队列为空，且没有可运行的RuleTask
+            # 检查是否所有任务都已完成
+            all_tasks_completed = all(task.is_completed() for task in self._tasks.values())
+            
+            if all_tasks_completed:
+                logger.debug("All tasks completed. Ending stream.")
+                break
+            elif current_time - last_progress_time > self._deadlock_detection_time * 2:
+                # 如果长时间没有进展，且没有活动任务和可运行任务，可能是死锁
+                logger.warning(f"No progress for {self._deadlock_detection_time * 2} seconds and no runnable tasks. Possible deadlock.")
+                # 可以选择结束或尝试恢复
+                break
+            
+            # 等待一段时间后再检查
+            logger.debug("No active executions, output queue was empty, waiting for context changes.")
+            await asyncio.sleep(0.5)
+            # 如果没有进展，继续循环
+
+    async def _monitor_loop(self) -> None:
+        """监控循环，检查任务状态和潜在的死锁"""
+        last_progress_time = time.time()
+        last_deadlock_check_time = time.time()
+        
+        while True:
+            await asyncio.sleep(1)  # 每秒检查一次
+            
+            current_time = time.time()
+            
+            # 检查是否有新的输出
+            if not self._output_queue.empty():
+                last_progress_time = current_time
+                
+            # 检查死锁情况 - 每 5 秒检查一次
+            if current_time - last_deadlock_check_time > 5:
+                # 检查长时间没有进展的任务
+                for task_id, last_activity_time in list(self._task_last_activity.items()):
+                    if task_id in self._tasks and not self._tasks[task_id].is_completed():
+                        # 检查任务是否长时间没有活动
+                        if current_time - last_activity_time > self._deadlock_detection_time:
+                            logger.warning(f"Task {task_id} has been inactive for {self._deadlock_detection_time} seconds. Possible deadlock.")
+                            # 可以在这里实现恢复策略，例如强制完成或重试任务
+                            try:
+                                # 尝试将长时间无活动的任务标记为失败
+                                if self._tasks[task_id].is_executing():
+                                    await self._tasks[task_id].set_state(TaskState.FAILED)
+                                    logger.warning(f"Marked stuck task {task_id} as FAILED")
+                            except Exception as e:
+                                logger.error(f"Error handling stuck task {task_id}: {e}")
+                
+                # 检查整体进展
+                if (current_time - last_progress_time > self._deadlock_detection_time and 
+                    self._active_task_executions and 
+                    not self._output_queue.empty()):
+                    # 长时间没有进展，但有活动任务和输出数据
+                    logger.warning(f"Potential deadlock detected. No progress for {self._deadlock_detection_time} seconds")
+                    # 可以在这里实现恢复策略
+                
+                # 更新最后检查时间
+                last_deadlock_check_time = current_time
 
     async def shutdown(self) -> None:
+        """关闭调度器并清理资源"""
         logger.info("Shutting down RuleDispatcher...")
-        for task_execution in list(self._active_task_executions):  # 遍历副本
+        
+        # 取消所有活动任务
+        for task_execution in list(self._active_task_executions):
             if not task_execution.done():
                 task_execution.cancel()
 
+        # 等待所有任务完成或取消
         if self._active_task_executions:
             await asyncio.gather(*self._active_task_executions, return_exceptions=True)
 
+        # 清理资源
         self._active_task_executions.clear()
         logger.info("All active task executions cancelled or finished.")
+        
+        # 将所有未完成的任务标记为失败
+        for task_id, task in self._tasks.items():
+            if not task.is_completed():
+                try:
+                    # 使用异步转同步的方式调用 set_state
+                    asyncio.create_task(task.set_state(TaskState.FAILED))
+                    logger.debug(f"Marked incomplete task {task_id} as FAILED during shutdown")
+                except Exception as e:
+                    logger.error(f"Error marking task {task_id} as FAILED during shutdown: {e}")
+        
         # 清空输出队列
         while not self._output_queue.empty():
-            self._output_queue.get_nowait()
-            self._output_queue.task_done()  # 如果使用task_done/join
+            try:
+                self._output_queue.get_nowait()
+                self._output_queue.task_done()
+            except Exception as e:
+                logger.error(f"Error clearing output queue: {e}")
+                break
+        
+        # 清理其他资源
+        self._rule_priorities.clear()
+        self._task_last_activity.clear()
+        
         logger.info("RuleDispatcher shut down.")
+        
+        # 取消事件总线订阅
+        try:
+            self._event_bus.unsubscribe("ctx_changed", self._handle_ctx_changed)
+            logger.debug("Unsubscribed from ctx_changed event")
+        except Exception as e:
+            logger.error(f"Error unsubscribing from events: {e}")

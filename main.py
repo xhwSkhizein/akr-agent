@@ -17,8 +17,10 @@ from core.tools.llm_tool import LLMCallTool
 
 # 配置日志
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.INFO, format="%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s",
+    datefmt = '%Y-%m-%d %H:%M:%S'
 )
+logger = logging.getLogger(__name__)
 
 ## 注册工具
 ToolCenter.register(
@@ -31,7 +33,7 @@ ToolCenter.register(
     )
 )
 llm_call_tool_def = ToolCenter.get_definition("LLMCallTool")
-print(json.dumps(llm_call_tool_def, indent=2, ensure_ascii=False))
+logger.info(json.dumps(llm_call_tool_def, indent=2, ensure_ascii=False))
 
 
 # 主函数
@@ -44,13 +46,13 @@ async def main():
     agent = Agent(config_dir="prompts/CoachLi/v1")
 
     user_input_2 = "我刚刚摔断了腿，应该怎么进行康复训练？"
-    print(f"\n--- 用户输入 ---\n{user_input_2}")
+    logger.info(f"\n--- 用户输入 ---\n{user_input_2}")
 
     async for chunk in agent.run_dynamic(user_input_2):
-        print(chunk, end="", flush=True)
+        logger.info(chunk)
 
-    print("\n--- 所有上下文 ---\n")
-    print(json.dumps(agent._observable_ctx.to_dict(), indent=2, ensure_ascii=False))
+    logger.info("\n--- 所有上下文 ---\n")
+    logger.info(json.dumps(agent._observable_ctx.to_dict(), indent=2, ensure_ascii=False))
 
 
 if __name__ == "__main__":

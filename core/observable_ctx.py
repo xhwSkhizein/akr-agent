@@ -35,7 +35,7 @@ class ObservableCtx:
             )
         old_value.append(value)
         self._data.set(key, old_value)
-        logger.info(f"Ctx append: key='{key}', value='{value}'")
+        logger.debug(f"Ctx append: key='{key}', value='{value}'")
         # Publish an event that the context has changed
         await self._event_bus.publish(
             event_type="ctx_changed", key=key, value=value, old_value=old_value

@@ -69,7 +69,7 @@ class AgentConfigEngine:
             # 确保规则数据包含必要的字段
             if not all(k in rule_data for k in ["name", "prompt"]):
                 raise ValueError(f"Rule {rule_file} missing required fields")
-            logger.info(f"Loading rule from {rule_file}, \n{rule_data}\n")
+            logger.debug(f"Loading rule from {rule_file}, \n{rule_data}\n")
 
             rules.append(RuleConfig(**rule_data))
         return rules
