@@ -49,7 +49,9 @@ async def main():
     logger.info(f"\n--- 用户输入 ---\n{user_input_2}")
 
     async for chunk in agent.run_dynamic(user_input_2):
-        logger.info(chunk)
+        # 将ResponseChunk对象转换为字典再序列化为JSON
+        chunk_dict = chunk.dict() if hasattr(chunk, 'dict') else chunk
+        logger.info(json.dumps(chunk_dict, indent=2, ensure_ascii=False))
 
     logger.info("\n--- 所有上下文 ---\n")
     logger.info(json.dumps(agent._observable_ctx.to_dict(), indent=2, ensure_ascii=False))

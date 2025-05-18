@@ -65,6 +65,8 @@ class RuleConfig(BaseModel):
                             - DIRECT_RETURN 直接返回给用户
                             - NEW_RULES 生成新的规则
         tool_result_key: 如果是 AS_CONTEXT，整个 AI 返回的 JSON 使用下面的 key 保存进 ctx 中
+        auto_generated: 是否是自动生成的规则
+        priority: 优先级
     """
 
     name: str
@@ -79,6 +81,7 @@ class RuleConfig(BaseModel):
     tool_result_target: Literal["AS_CONTEXT", "DIRECT_RETURN", "NEW_RULES"]
     tool_result_key: Optional[str] = None
     auto_generated: bool = False
+    priority: int = 0
 
     @classmethod
     def parse_and_gen(

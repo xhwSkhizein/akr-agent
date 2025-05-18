@@ -11,6 +11,7 @@ from core.prompt_engine import AgentConfigEngine
 from core.dispatcher import RuleDispatcher
 from core.event_bus import EventBus
 from core.observable_ctx import ObservableCtx
+from core.chunk import ResponseChunk
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +40,7 @@ class Agent:
             ctx=self._observable_ctx,
         )
 
-    async def run_dynamic(self, user_input: str) -> AsyncGenerator[str, None]:
+    async def run_dynamic(self, user_input: str) -> AsyncGenerator[ResponseChunk, None]:
         """
         运行 Agent 的动态对话流程
 
