@@ -2,7 +2,8 @@ import asyncio
 import logging
 import uuid
 import time
-from typing import List, Dict, Set, Any, AsyncGenerator, Optional
+from typing import List, Dict, Set, Any, AsyncGenerator, Optional, Tuple
+from collections import defaultdict
 
 from core.rule_config import RuleConfig
 from core.event_bus import EventBus
@@ -12,6 +13,51 @@ from core.task_state import TaskState
 
 
 logger = logging.getLogger(__name__)
+
+
+class RuleIndex:
+    """规则索引结构，用于加速规则匹配"""
+    
+    def __init__(self):
+        self._key_to_rules = defaultdict(set)  # ctx_key -> {rule_ids}
+        
+    def add_rule(self, rule_id: str, depend_keys: List[str]) -> None:
+        """添加规则到索引"""
+        for key in depend_keys:
+            self._key_to_rules[key].add(rule_id)
+            
+    def remove_rule(self, rule_id: str, depend_keys: List[str]) -> None:
+        """从索引中移除规则"""
+        for key in depend_keys:
+            if rule_id in self._key_to_rules[key]:
+                self._key_to_rules[key].remove(rule_id)
+                
+    def get_rules_for_key(self, key: str) -> Set[str]:
+        """获取依赖指定键的所有规则ID"""
+        return self._key_to_rules.get(key, set())
+
+
+class PriorityTaskQueue:
+    """优先级任务队列，用于高效调度任务"""
+    
+    def __init__(self):
+        self._queue: List[Tuple[int, str]] = []  # [(priority, task_id)]
+        
+    def put(self, priority: int, task_id: str) -> None:
+        """添加任务到队列，按优先级排序（高优先级在前）"""
+        self._queue.append((-priority, task_id))  # 负优先级使高优先级在前
+        self._queue.sort(key=lambda x: x[0])  # 按优先级排序
+        
+    def get(self) -> Optional[str]:
+        """获取优先级最高的任务ID"""
+        if not self._queue:
+            return None
+        _, task_id = self._queue.pop(0)
+        return task_id
+        
+    def __len__(self) -> int:
+        """获取队列长度"""
+        return len(self._queue)
 
 
 class RuleDispatcher:
@@ -48,6 +94,12 @@ class RuleDispatcher:
         # 输出队列
         self._output_queue = asyncio.Queue()
         
+        # 规则索引结构 - 优化1：加速规则匹配
+        self._rule_index = RuleIndex()
+        
+        # 优先级任务队列 - 优化2：高效任务调度
+        self._task_priority_queue = PriorityTaskQueue()
+        
         # 订阅上下文变化事件
         self._event_bus.subscribe("ctx_changed", self._handle_ctx_changed)
         
@@ -75,6 +127,9 @@ class RuleDispatcher:
         priority = getattr(rule_config, "priority", 0)
         self._rule_priorities[rule_id] = priority
         
+        # 添加到规则索引 - 优化1：加速规则匹配
+        self._rule_index.add_rule(rule_id, rule_config.depend_ctx_key)
+        
         logger.debug(
             f"Added new rule: {rule_id} (Name: {rule_config.name}, "
             f"Depend_ctx_key: {rule_config.depend_ctx_key}, "
@@ -95,28 +150,31 @@ class RuleDispatcher:
         
         logger.info(f"Ctx changed: key='{changed_key}', changed value: {changed_value}, old value: {old_value}")
         
-        # 找出依赖于此键的所有规则
-        rules_to_check = []
-        for rule_id, rule_config in self._rule_configs.items():
-            # 检查规则是否依赖于变化的键
-            if changed_key in rule_config.depend_ctx_key:
-                logger.debug(f"Rule {rule_id} depends on {changed_key}. Evaluating.")
-                
+        # 使用规则索引快速找出依赖于此键的所有规则 - 优化1：加速规则匹配
+        dependent_rule_ids = self._rule_index.get_rules_for_key(changed_key)
+        logger.debug(f"Found {len(dependent_rule_ids)} rules depending on key '{changed_key}'")
+        
+        # 重置优先级队列
+        self._task_priority_queue = PriorityTaskQueue()
+        
+        # 将依赖规则按优先级添加到队列
+        for rule_id in dependent_rule_ids:
+            if rule_id in self._rule_configs:
                 # 更新最后活动时间
                 self._task_last_activity[rule_id] = time.time()
                 
-                # 添加到要检查的任务列表
+                # 获取规则优先级
                 priority = self._rule_priorities.get(rule_id, 0)
-                rules_to_check.append((priority, rule_id))
-            else:
-                logger.debug(f"Rule {rule_id} does not depend on {changed_key}. Skipping.")
+                
+                # 添加到优先级队列 - 优化2：高效任务调度
+                self._task_priority_queue.put(priority, rule_id)
+                logger.debug(f"Rule {rule_id} added to priority queue with priority {priority}")
         
-        # 按优先级排序（从高到低）
-        rules_to_check.sort(key=lambda x: x[0], reverse=True)
-        
-        # 依次检查和调度任务
-        for _, rule_id in rules_to_check:
-            await self._check_and_create_task_if_needed(rule_id)
+        # 依次检查和调度任务，按优先级顺序
+        while len(self._task_priority_queue) > 0:
+            rule_id = self._task_priority_queue.get()
+            if rule_id:
+                await self._check_and_create_task_if_needed(rule_id)
 
     async def _check_and_create_task_if_needed(self, rule_id: str) -> None:
         """检查规则条件，如果满足则创建并调度任务"""
@@ -318,23 +376,23 @@ class RuleDispatcher:
                 continue
 
             # 条件2：没有活动的asyncio Task。是否有就绪的RuleTask？
-            runnable_tasks = []
+            # 使用优先级队列重新填充可运行任务 - 优化2：高效任务调度
+            self._task_priority_queue = PriorityTaskQueue()  # 重置队列
+            
+            # 检查所有未完成的任务，将满足条件的加入优先级队列
             for task_id, task in self._tasks.items():
                 if not task.is_completed() and task.is_condition_meet(self._ctx):
-                    priority = self._rule_priorities.get(task_id, 0)
-                    runnable_tasks.append((priority, task_id))
+                    priority = self._rule_priorities.get(task.rule_id, 0)
+                    self._task_priority_queue.put(priority, task_id)
             
-            # 按优先级排序
-            runnable_tasks.sort(key=lambda x: x[0], reverse=True)
-            
-            if runnable_tasks:
+            if len(self._task_priority_queue) > 0:
                 # 有就绪的任务但可能尚未被调度器选中
-                logger.debug(f"get_output_stream: No active executions, but {len(runnable_tasks)} tasks are ready. Yielding briefly.")
+                logger.debug(f"get_output_stream: No active executions, but {len(self._task_priority_queue)} tasks are ready. Yielding briefly.")
                 # 尝试调度优先级最高的任务
-                if runnable_tasks and not self._task_semaphore.locked():
-                    _, task_id = runnable_tasks[0]
-                    task = self._tasks[task_id]
-                    await self._check_and_create_task_if_needed(task_id)
+                if not self._task_semaphore.locked():
+                    task_id = self._task_priority_queue.get()
+                    if task_id:
+                        await self._check_and_create_task_if_needed(task_id)
                 await asyncio.sleep(0.1)
                 # 更新进展时间
                 last_progress_time = time.time()

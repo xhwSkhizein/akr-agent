@@ -3,7 +3,7 @@ import asyncio
 import time
 from unittest.mock import MagicMock, patch, AsyncMock
 
-from core.dispatcher import RuleDispatcher
+from core.dispatcher import RuleDispatcher, RuleIndex, PriorityTaskQueue
 from core.event_bus import EventBus
 from core.observable_ctx import ObservableCtx
 from core.rule_config import RuleConfig
@@ -82,6 +82,10 @@ class TestRuleDispatcher:
         
         # 验证优先级已设置
         assert rule_id in dispatcher._rule_priorities
+        
+        # 验证规则已添加到规则索引
+        rules_for_key = dispatcher._rule_index.get_rules_for_key("new_key")
+        assert rule_id in rules_for_key
 
     @pytest.mark.asyncio
     async def test_handle_ctx_changed(self, dispatcher, observable_ctx):
@@ -95,6 +99,10 @@ class TestRuleDispatcher:
         # 模拟 RuleTask.check_rule_condition 始终返回 True
         with patch('core.rule_task.RuleTask.check_rule_condition', return_value=True), \
              patch('core.tools.base.ToolCenter.run_tool', side_effect=mock_run_tool):
+            # 验证规则索引中已包含测试规则
+            rules_for_test_key = dispatcher._rule_index.get_rules_for_key("test_key")
+            assert len(rules_for_test_key) > 0
+            
             # 模拟上下文变化
             await observable_ctx.set("test_key", "test_value")
             
@@ -154,6 +162,10 @@ class TestRuleDispatcher:
         )
         # 添加规则配置
         rule_id = dispatcher.add_new_rule(new_rule_config)
+        
+        # 验证规则已添加到规则索引
+        rules_for_key = dispatcher._rule_index.get_rules_for_key("shutdown_key")
+        assert rule_id in rules_for_key
         
         # 手动创建一个任务实例用于测试
         task_id = dispatcher._generate_task_id(rule_id)
