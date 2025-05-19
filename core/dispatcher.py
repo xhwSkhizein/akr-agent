@@ -161,7 +161,7 @@ class RuleDispatcher:
 
         # 使用规则索引快速找出依赖于此键的所有规则 - 优化1：加速规则匹配
         dependent_rule_ids = self._rule_index.get_rules_for_key(changed_key)
-        logger.debug(
+        logger.info(
             f"Found {len(dependent_rule_ids)} rules depending on key '{changed_key}'"
         )
 
@@ -214,7 +214,7 @@ class RuleDispatcher:
                 if task.rule_id == rule_id and task.is_executing()
             ]
             if active_tasks:
-                logger.debug(
+                logger.info(
                     f"Rule {rule_id} already has active tasks. Skipping task creation."
                 )
                 return
@@ -223,7 +223,7 @@ class RuleDispatcher:
             if not RuleTask.check_condition(
                 condition=rule_config.match_condition, ctx=self._ctx
             ):
-                logger.debug(
+                logger.info(
                     f"Rule {rule_id} does not meet the condition. Skipping task creation."
                 )
                 return

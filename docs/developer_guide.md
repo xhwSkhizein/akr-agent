@@ -68,7 +68,7 @@ async def main():
     
     # 运行Agent并获取响应
     async for chunk in agent.run_dynamic(user_input):
-        print(chunk, end="", flush=True)
+        print(chunk.content, end="", flush=True)
     
     print("\n--- 完成 ---\n")
 
@@ -231,6 +231,8 @@ tool_result_target: "DIRECT_RETURN"
   - **DIRECT_RETURN**: 直接返回给用户
   - **NEW_RULES**: 生成新的规则
 - **tool_result_key**: 当tool_result_target为AS_CONTEXT时，用于存储结果的上下文键
+- **auto_generated**: 是否是自动生成的规则
+- **priority**: 优先级
 
 ### 规则执行流程
 
