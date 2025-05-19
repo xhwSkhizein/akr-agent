@@ -70,7 +70,6 @@ class RuleTask:
     
     async def execute_tool(self, ctx, dispatcher) -> AsyncGenerator[str, None]:
         """执行工具调用，返回异步生成器"""
-        # 现有实现基本保持不变，但不再向共享队列写入
         # 直接使用yield返回结果
 ```
 

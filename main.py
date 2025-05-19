@@ -17,8 +17,9 @@ from core.tools.llm_tool import LLMCallTool
 
 # 配置日志
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s",
-    datefmt = '%Y-%m-%d %H:%M:%S'
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
 )
 logger = logging.getLogger(__name__)
 
@@ -50,11 +51,12 @@ async def main():
 
     async for chunk in agent.run_dynamic(user_input_2):
         # 将ResponseChunk对象转换为字典再序列化为JSON
-        chunk_dict = chunk.dict() if hasattr(chunk, 'dict') else chunk
-        logger.info(json.dumps(chunk_dict, indent=2, ensure_ascii=False))
+        print(chunk.content, end="", flush=True)
 
     logger.info("\n--- 所有上下文 ---\n")
-    logger.info(json.dumps(agent._observable_ctx.to_dict(), indent=2, ensure_ascii=False))
+    logger.info(
+        json.dumps(agent._observable_ctx.to_dict(), indent=2, ensure_ascii=False)
+    )
 
 
 if __name__ == "__main__":

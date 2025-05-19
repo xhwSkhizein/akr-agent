@@ -1,6 +1,8 @@
 from typing import Any, Dict, Optional
 import logging
 
+from core.event_types import EventType
+
 logger = logging.getLogger(__name__)
 
 from core.event_bus import EventBus
@@ -22,7 +24,7 @@ class ObservableCtx:
         # Publish an event that the context has changed
         # The event data should be enough for subscribers to act
         await self._event_bus.publish(
-            event_type="ctx_changed", key=key, value=value, old_value=old_value
+            event_type=EventType.CTX_CHANGED, key=key, value=value, old_value=old_value
         )
 
     async def append(self, key: str, value: Any) -> None:
@@ -38,7 +40,7 @@ class ObservableCtx:
         logger.debug(f"Ctx append: key='{key}', value='{value}'")
         # Publish an event that the context has changed
         await self._event_bus.publish(
-            event_type="ctx_changed", key=key, value=value, old_value=old_value
+            event_type=EventType.CTX_CHANGED, key=key, value=value, old_value=old_value
         )
 
     def get(self, key: str, default: Optional[Any] = None) -> Any:

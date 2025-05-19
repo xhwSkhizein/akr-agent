@@ -1,5 +1,5 @@
 import logging
-from typing import TYPE_CHECKING, AsyncGenerator, List, Optional
+from typing import TYPE_CHECKING, AsyncGenerator, List, Optional, Dict, Any
 import json
 import time
 import asyncio
@@ -8,21 +8,28 @@ from core.tools.base import ToolCenter
 from core.rule_config import RuleConfig
 from core.observable_ctx import ObservableCtx
 from core.task_state import TaskState, TaskStateTransitionError
+from core.event_types import EventType, ChangeType
 
 if TYPE_CHECKING:
     from .dispatcher import RuleDispatcher  # Circular import for type hinting
+    from .event_bus import EventBus
 
 logger = logging.getLogger(__name__)
 
 
 class RuleTask:
-    def __init__(self, rule_config: RuleConfig, task_id: str, rule_id: str = None):
+    def __init__(self, rule_config: RuleConfig, task_id: str, event_bus: "EventBus", rule_id: str = None):
         self.rule_config = rule_config
         self.task_id = task_id
         self.rule_id = rule_id  # 关联的规则ID
         self._state = TaskState.PENDING
         self._state_lock = asyncio.Lock()  # 用于保护状态转换的锁
         self._success = False  # 执行是否成功
+        self._event_bus = event_bus  # 事件总线引用
+        
+    async def initialize(self) -> None:
+        """异步初始化方法，用于发布任务创建事件"""
+        await self._publish_task_event(ChangeType.TASK_CREATED)
 
     def is_completed(self) -> bool:
         """检查任务是否已完成（包括成功完成和失败）"""
@@ -31,67 +38,104 @@ class RuleTask:
     def is_executing(self) -> bool:
         """检查任务是否正在执行中"""
         return self._state == TaskState.EXECUTING
-        
+
     def is_ready(self) -> bool:
         """检查任务是否准备好执行"""
         return self._state == TaskState.READY
-        
+
     def get_state(self) -> TaskState:
         """获取当前任务状态"""
         return self._state
         
-    async def set_state(self, new_state: TaskState, success: Optional[bool] = None) -> None:
-        """
-        原子地更新任务状态
+    def _is_valid_state_transition(self, new_state: TaskState) -> bool:
+        """检查状态转换是否有效
         
         Args:
-            new_state: 新的任务状态
-            success: 如果新状态是 COMPLETED 或 FAILED，指定任务是否成功
-        
+            new_state: 新状态
+            
+        Returns:
+            是否是有效的状态转换
+        """
+        valid_transitions = {
+            TaskState.PENDING: [TaskState.READY, TaskState.FAILED],
+            TaskState.READY: [TaskState.EXECUTING, TaskState.FAILED],
+            TaskState.EXECUTING: [TaskState.COMPLETED, TaskState.FAILED],
+            TaskState.COMPLETED: [],  # 终态，不能再转换
+            TaskState.FAILED: [],  # 终态，不能再转换
+        }
+        return new_state in valid_transitions[self._state]
+
+    async def _publish_task_event(self, change_type: str, error: Optional[str] = None, old_state: Optional[TaskState] = None) -> None:
+        """发布任务事件
+
+        Args:
+            change_type: 变化类型，来自 ChangeType 常量
+            error: 如果是错误状态，提供错误信息
+            old_state: 旧状态
+        """
+        event_data = {
+            "task_id": self.task_id,
+            "rule_id": self.rule_id,
+            "rule_name": self.rule_config.name if hasattr(self.rule_config, 'name') else 'N/A',
+            "state": self._state,
+            "old_state": old_state,
+            "new_state": self._state,
+            "change_type": change_type,
+            "success": self._success,
+            "error": error
+        }
+        await self._event_bus.publish(EventType.TASK_CHANGED, **event_data)
+    
+    async def set_state(self, new_state: TaskState, success: Optional[bool] = None, error: Optional[str] = None) -> None:
+        """设置任务状态
+
+        Args:
+            new_state: 新状态
+            success: 是否成功完成
+            error: 错误信息（如果有）
+
         Raises:
-            TaskStateTransitionError: 当尝试进行无效的状态转换时
+            TaskStateTransitionError: 无效的状态转换
         """
         async with self._state_lock:
-            old_state = self._state
-            
-            # 验证状态转换的有效性
-            valid_transitions = {
-                TaskState.PENDING: [TaskState.READY, TaskState.FAILED],
-                TaskState.READY: [TaskState.EXECUTING, TaskState.FAILED],
-                TaskState.EXECUTING: [TaskState.COMPLETED, TaskState.FAILED],
-                TaskState.COMPLETED: [],  # 终态，不能再转换
-                TaskState.FAILED: []       # 终态，不能再转换
-            }
-            
-            if new_state not in valid_transitions[old_state]:
+            # 检查状态转换是否有效
+            if not self._is_valid_state_transition(new_state):
                 raise TaskStateTransitionError(
-                    old_state, 
-                    new_state, 
-                    f"Task {self.task_id} cannot transition from {old_state.value} to {new_state.value}"
+                    current_state=self._state,
+                    target_state=new_state
                 )
-            
-            # 更新状态
+
+            # 记录状态变化
+            old_state = self._state
             self._state = new_state
-            
-            # 如果是完成或失败状态，更新成功标志
-            if new_state == TaskState.COMPLETED and success is not None:
+
+            # 更新成功状态
+            if success is not None:
                 self._success = success
-            elif new_state == TaskState.FAILED:
-                self._success = False
-                
+
+            # 记录状态变化
+            logger.debug(
+                f"Task {self.task_id} (Name: {self.rule_config.name}) state changed: {old_state.value} -> {new_state.value}"
+            )
+
+            # 发布状态变更事件
+            await self._publish_task_event(ChangeType.TASK_STATE_CHANGED, error, old_state)
             logger.debug(
                 f"Task {self.task_id} (Name: {self.rule_config.name if hasattr(self.rule_config, 'name') else 'N/A'}) state changed: {old_state.value} -> {new_state.value}"
             )
-            
+
     # 为了兼容现有代码，提供旧的接口
-    def set_completed(self, status: bool, success: bool = True) -> None:
+    def set_completed(self, status: bool, success: bool = True, error: Optional[str] = None) -> None:
         """兼容旧接口，设置任务完成状态"""
         if status:
             # 使用异步转同步的方式调用 set_state
-            asyncio.create_task(self.set_state(
-                TaskState.COMPLETED if success else TaskState.FAILED,
-                success=success
-            ))
+            asyncio.create_task(
+                self.set_state(
+                    TaskState.COMPLETED if success else TaskState.FAILED,
+                    success=success,
+                    error=error
+                )
+            )
         logger.debug(
             f"Task {self.task_id} (Name: {self.rule_config.name if hasattr(self.rule_config, 'name') else 'N/A'}) marked as completed. Success: {success}"
         )
@@ -99,11 +143,13 @@ class RuleTask:
     def set_executing(self, status: bool) -> None:
         """兼容旧接口，设置任务执行状态"""
         if status:
-            # 直接修改状态，绕过状态转换检查
-            # 这是为了兼容旧代码，在测试中更可靠
-            self._state = TaskState.EXECUTING
+            # 使用异步转同步的方式调用 set_state
+            async def _set_executing():
+                await self.set_state(TaskState.READY)
+                await self.set_state(TaskState.EXECUTING)
+            asyncio.create_task(_set_executing())
             logger.debug(
-                f"Task {self.task_id} (Name: {self.rule_config.name if hasattr(self.rule_config, 'name') else 'N/A'}) set to executing state (compatibility method)"
+                f"Task {self.task_id} (Name: {self.rule_config.name if hasattr(self.rule_config, 'name') else 'N/A'}) set to executing state"
             )
         else:
             # 取消执行状态，但不改变任务状态（由其他方法负责）
@@ -117,30 +163,34 @@ class RuleTask:
             )
             return False  # Don't re-run if completed or already processing
 
-        return RuleTask.check_condition(self.rule_config.match_condition, ctx, self.task_id)
-    
+        return RuleTask.check_condition(
+            self.rule_config.match_condition, ctx, self.task_id
+        )
+
     @classmethod
     def check_rule_condition(cls, rule_config: RuleConfig, ctx: ObservableCtx) -> bool:
         """类方法：检查规则条件是否满足，不需要创建任务实例
-        
+
         Args:
             rule_config: 规则配置
             ctx: 上下文对象
-            
+
         Returns:
             条件是否满足
         """
         return cls.check_condition(rule_config.match_condition, ctx, rule_config.name)
 
     @staticmethod
-    def check_condition(condition: str, ctx: ObservableCtx, log_id: str = "unknown") -> bool:
+    def check_condition(
+        condition: str, ctx: ObservableCtx, log_id: str = "unknown"
+    ) -> bool:
         """静态方法：检查条件是否满足，不需要创建任务实例
-        
+
         Args:
             condition: 条件表达式
             ctx: 上下文对象
             log_id: 用于日志记录的ID
-            
+
         Returns:
             条件是否满足
         """
@@ -172,9 +222,7 @@ class RuleTask:
                 )
                 return bool(result)
             except Exception as e:
-                logger.error(
-                    f"Error evaluating condition for {log_id}: {e}"
-                )
+                logger.error(f"Error evaluating condition for {log_id}: {e}")
                 return False
         else:
             # If no condition is specified, default to True
@@ -333,7 +381,8 @@ class RuleTask:
             # 使用新的状态机设置状态
             await self.set_state(
                 TaskState.COMPLETED if not error_occurred else TaskState.FAILED,
-                success=not error_occurred
+                success=not error_occurred,
+                error=str(last_error) if error_occurred and last_error else None
             )
 
             # 记录执行结果

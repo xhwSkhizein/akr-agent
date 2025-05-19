@@ -194,15 +194,29 @@ class TestDispatcherOptimizations:
             await observable_ctx.set("common_key", "value")
             
             # 给事件总线和任务调度一点时间
-            await asyncio.sleep(0.5)
+            await asyncio.sleep(0.2)
             
-            # 收集输出以验证执行顺序
+            # 收集输出流的数据以验证执行顺序
             outputs = []
-            while not dispatcher_with_rules._output_queue.empty():
-                outputs.append(await dispatcher_with_rules._output_queue.get())
+            
+            # 创建一个带超时的收集器
+            async def collect_outputs(timeout=0.2):
+                start_time = time.time()
+                async for chunk in dispatcher_with_rules.get_output_stream():
+                    outputs.append(chunk.content)
+                    # 检查是否超时
+                    if time.time() - start_time > timeout:
+                        break
+                return len(outputs) > 0
+            
+            # 尝试收集输出
+            try:
+                has_outputs = await asyncio.wait_for(collect_outputs(), timeout=0.5)
+            except asyncio.TimeoutError:
+                has_outputs = False
             
             # 验证至少有一些输出
-            assert len(outputs) > 0
+            assert has_outputs or len(outputs) > 0
 
     @pytest.mark.asyncio
     async def test_performance_comparison(self, event_bus, observable_ctx, sample_rule_configs):

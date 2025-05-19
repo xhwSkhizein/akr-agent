@@ -1,4 +1,5 @@
 import pytest
+import pytest_asyncio
 import asyncio
 import time
 from unittest.mock import MagicMock, patch, AsyncMock
@@ -10,14 +11,14 @@ from core.event_bus import EventBus
 from core.task_state import TaskState, TaskStateTransitionError
 
 
-@pytest.fixture
-def event_bus():
+@pytest_asyncio.fixture
+async def event_bus():
     """创建一个事件总线实例"""
     return EventBus()
 
 
-@pytest.fixture
-def observable_ctx(event_bus):
+@pytest_asyncio.fixture
+async def observable_ctx(event_bus):
     """创建一个可观察上下文实例"""
     return ObservableCtx(event_bus=event_bus)
 
@@ -41,10 +42,12 @@ def sample_rule_config():
     )
 
 
-@pytest.fixture
-def rule_task(sample_rule_config):
+@pytest_asyncio.fixture
+async def rule_task(sample_rule_config, event_bus):
     """创建一个规则任务实例"""
-    return RuleTask(rule_config=sample_rule_config, task_id="test_task_id")
+    task = RuleTask(rule_config=sample_rule_config, task_id="test_task_id", event_bus=event_bus)
+    await task.initialize()
+    return task
 
 
 class TestRuleTask:
@@ -91,7 +94,7 @@ class TestRuleTask:
             
         # 测试兼容方法
         # 创建新任务测试兼容方法
-        new_task = RuleTask(rule_config=rule_task.rule_config, task_id="compat_test")
+        new_task = RuleTask(rule_config=rule_task.rule_config, task_id="compat_test", event_bus=rule_task._event_bus)
         
         # 使用兼容方法设置执行状态
         new_task.set_executing(True)
@@ -125,7 +128,7 @@ class TestRuleTask:
         assert not rule_task.is_condition_meet(observable_ctx)
         
         # 创建新任务测试执行中状态
-        new_task = RuleTask(rule_config=rule_task.rule_config, task_id="executing_test")
+        new_task = RuleTask(rule_config=rule_task.rule_config, task_id="executing_test", event_bus=rule_task._event_bus)
         await new_task.set_state(TaskState.READY)
         await new_task.set_state(TaskState.EXECUTING)
         # 设置为执行中，条件应该不再满足（因为正在执行的任务不应再次执行）
@@ -320,6 +323,44 @@ class TestRuleTask:
             assert rule_task.is_completed()
             assert not rule_task.is_executing()
             assert rule_task.get_state() == TaskState.FAILED
+
+    @pytest.mark.asyncio
+    async def test_task_state_change_events(self, rule_task, event_bus):
+        """测试任务状态变更事件发布"""
+        # 创建事件接收器
+        received_events = []
+        async def event_handler(event_data):
+            received_events.append(event_data)
+        
+        # 订阅任务状态变更事件
+        event_bus.subscribe("task_changed", event_handler)
+        
+        # 测试状态变更
+        await rule_task.set_state(TaskState.READY)
+        await rule_task.set_state(TaskState.EXECUTING)
+        await rule_task.set_state(TaskState.COMPLETED, success=True)
+        
+        # 等待事件处理完成
+        await asyncio.sleep(0.1)
+        
+        # 验证事件
+        assert len(received_events) == 3  # PENDING -> READY -> EXECUTING -> COMPLETED
+        
+        # 验证第一个事件（PENDING -> READY）
+        assert received_events[0]["task_id"] == rule_task.task_id
+        assert received_events[0]["old_state"] == TaskState.PENDING
+        assert received_events[0]["new_state"] == TaskState.READY
+        
+        # 验证第二个事件（READY -> EXECUTING）
+        assert received_events[1]["task_id"] == rule_task.task_id
+        assert received_events[1]["old_state"] == TaskState.READY
+        assert received_events[1]["new_state"] == TaskState.EXECUTING
+        
+        # 验证第三个事件（EXECUTING -> COMPLETED）
+        assert received_events[2]["task_id"] == rule_task.task_id
+        assert received_events[2]["old_state"] == TaskState.EXECUTING
+        assert received_events[2]["new_state"] == TaskState.COMPLETED
+        assert received_events[2]["success"] == True
 
     @pytest.mark.asyncio
     async def test_execute_tool_retry(self, rule_task, observable_ctx):

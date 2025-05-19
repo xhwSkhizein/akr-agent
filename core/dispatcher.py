@@ -11,6 +11,7 @@ from core.observable_ctx import ObservableCtx
 from core.rule_task import RuleTask
 from core.task_state import TaskState
 from core.chunk import ResponseChunk
+from core.output_stream import OutputStreamManager, StreamMetadata, OutputChunk
 
 
 logger = logging.getLogger(__name__)
@@ -98,8 +99,8 @@ class RuleDispatcher:
         # 死锁检测
         self._deadlock_detection_time = deadlock_detection_time
 
-        # 输出队列
-        self._output_queue: asyncio.Queue[ResponseChunk] = asyncio.Queue()
+        # 输出流管理器
+        self._output_manager = OutputStreamManager(event_bus=self._event_bus)
 
         # 规则索引结构 - 优化1：加速规则匹配
         self._rule_index = RuleIndex()
@@ -229,7 +230,10 @@ class RuleDispatcher:
             # 条件满足，创建新任务
             task_id = self._generate_task_id(rule_id)
             new_task = RuleTask(
-                rule_config=rule_config, task_id=task_id, rule_id=rule_id
+                rule_config=rule_config,
+                task_id=task_id,
+                event_bus=self._event_bus,
+                rule_id=rule_id,
             )
             self._tasks[task_id] = new_task
 
@@ -276,12 +280,27 @@ class RuleDispatcher:
             self._task_semaphore.release()  # 释放信号量
             return
 
-        logger.debug(
+        logger.info(
             f"Task {task.task_id} (Name: {task.rule_config.name}) is ready. Scheduling for execution."
         )
 
         # 准备执行协程
         execution_coro = task.execute_tool(ctx=self._ctx, dispatcher=self)
+
+        # 创建流元数据
+        metadata = StreamMetadata(
+            rule_name=task.rule_config.name,
+            rule_id=task.rule_id,
+            task_id=task.task_id,
+            rule_priority=task.rule_config.priority,
+        )
+
+        # 向输出管理器注册此流
+        stream_id = await self._output_manager.register_stream(execution_coro, metadata)
+
+        logger.info(
+            f"Task {task.task_id} (Name: {task.rule_config.name}) is scheduled for execution. stream_id={stream_id}"
+        )
 
         # 创建任务包装器
         async def task_wrapper():
@@ -295,43 +314,58 @@ class RuleDispatcher:
                     # 不使用 wait_for 直接包装异步生成器，而是使用单独的超时检查
                     start_time = time.time()
 
-                    async for output_chunk in execution_coro:
+                    # 注意：执行协程已经注册到输出管理器，这里不需要手动迭代
+                    # 只需要等待协程完成或超时
+                    while True:
+                        # 检查任务是否已经完成
+                        if task.is_completed():
+                            logger.debug(
+                                f"Task {task.task_id} is already completed, exiting wrapper"
+                            )
+                            break
+
                         # 检查是否超时
                         if time.time() - start_time > timeout:
                             raise asyncio.TimeoutError(
                                 f"Task execution timed out after {timeout} seconds"
                             )
 
-                        response_chunk = ResponseChunk(
-                            content=output_chunk,
-                            rule_name=task.rule_config.name,
-                            rule_id=task.rule_id,
-                            task_id=task.task_id,
-                            rule_priority=task.rule_config.priority,
-                        )
-                        await self._output_queue.put(response_chunk)
                         # 更新最后活动时间
                         self._task_last_activity[task.task_id] = time.time()
+
+                        # 短暂等待后继续检查
+                        await asyncio.sleep(0.1)
+
                 except asyncio.TimeoutError:
                     error_occurred = True
                     logger.error(
                         f"Task {task.task_id} timed out after {timeout} seconds"
                     )
-                    await self._output_queue.put(
-                        ResponseChunk(
-                            f"Error: Task execution timed out after {timeout} seconds",
-                            rule_name=task.rule_config.name,
-                            rule_id=task.rule_id,
-                            task_id=task.task_id,
-                            rule_priority=task.rule_config.priority,
-                        )
+
+                    # 创建一个错误消息生成器并注册到输出管理器
+                    async def error_generator():
+                        yield f"Error: Task execution timed out after {timeout} seconds"
+
+                    # 注册错误消息生成器
+                    await self._output_manager.register_stream(
+                        error_generator(), metadata
+                    )
+                    # 直接设置任务状态为失败
+                    task._state = TaskState.FAILED
+                    task._success = False
+                    logger.debug(
+                        f"Task {task.task_id} state changed: {TaskState.EXECUTING.value} -> {TaskState.FAILED.value}"
                     )
             except Exception as e:
                 error_occurred = True
                 logger.error(f"Error executing task {task.task_id}: {e}", exc_info=True)
                 try:
-                    # 尝试将任务设置为失败状态
-                    await task.set_state(TaskState.FAILED)
+                    # 直接设置任务状态为失败，避免使用异步方法
+                    task._state = TaskState.FAILED
+                    task._success = False
+                    logger.debug(
+                        f"Task {task.task_id} state changed: {TaskState.EXECUTING.value} -> {TaskState.FAILED.value}"
+                    )
                 except Exception as state_error:
                     logger.error(f"Error setting task state to FAILED: {state_error}")
             finally:
@@ -343,9 +377,19 @@ class RuleDispatcher:
                     try:
                         # 如果任务还没有被标记为完成，则设置其状态
                         if error_occurred:
-                            await task.set_state(TaskState.FAILED)
+                            # 直接设置任务状态为失败，避免使用异步方法
+                            task._state = TaskState.FAILED
+                            task._success = False
+                            logger.debug(
+                                f"Task {task.task_id} state changed: {TaskState.EXECUTING.value} -> {TaskState.FAILED.value}"
+                            )
                         else:
-                            await task.set_state(TaskState.COMPLETED, success=True)
+                            # 直接设置任务状态为完成，避免使用异步方法
+                            task._state = TaskState.COMPLETED
+                            task._success = True
+                            logger.debug(
+                                f"Task {task.task_id} state changed: {TaskState.EXECUTING.value} -> {TaskState.COMPLETED.value}"
+                            )
                     except Exception as state_error:
                         logger.error(f"Error setting final task state: {state_error}")
 
@@ -356,144 +400,69 @@ class RuleDispatcher:
             self._active_task_executions.discard
         )  # 完成时自动移除
 
-    async def get_output_stream(self) -> AsyncGenerator[ResponseChunk, None]:
+    async def get_output_stream(self) -> AsyncGenerator[OutputChunk, None]:
         """
         提供最终输出的异步生成器。
-        当没有任务正在运行，输出队列为空，
-        且当前上下文下没有待处理的任务可以就绪时结束。
-        增强了死锁检测和终止检测。
+        使用OutputStreamManager管理多个输出流，
+        当所有任务完成且所有输出流耗尽时结束。
         """
-        # 记录最后进展时间，用于死锁检测
-        last_progress_time = time.time()
-        # 记录最后检查死锁的时间
-        last_deadlock_check_time = time.time()
+        # 启动监控循环作为后台任务
+        monitor_task = asyncio.create_task(self._monitor_tasks_completion())
 
-        while True:
-            current_time = time.time()
+        try:
+            # 持续检查是否有任务正在执行或等待调度
+            while True:
+                # 检查是否有输出可用
+                has_output = False
+                async for chunk in self._output_manager.get_output_stream():
+                    has_output = True
+                    yield chunk
 
-            # 首先尝试从输出队列获取项目
-            try:
-                chunk: ResponseChunk = await asyncio.wait_for(
-                    self._output_queue.get(), timeout=0.05
-                )
-                yield chunk
-                # 成功获取到块，更新进展时间
-                last_progress_time = time.time()
-                continue
-            except asyncio.TimeoutError:
-                # 在指定时间内输出队列为空或没有新的 chunk 到达
-                # 现在检查是否应该结束
-                pass
-            except asyncio.CancelledError:
-                logger.debug("Output stream cancelled.")
-                break
+                # 检查是否所有任务都已完成
+                active_tasks = [
+                    task for task in self._tasks.values() if not task.is_completed()
+                ]
+                active_executions = len(self._active_task_executions)
+                pending_in_queue = len(self._task_priority_queue)
 
-            # 检查死锁情况 - 每 5 秒检查一次
-            if current_time - last_deadlock_check_time > 5:
-                # 检查长时间没有进展的任务
-                for task_id, last_activity_time in list(
-                    self._task_last_activity.items()
-                ):
-                    if (
-                        task_id in self._tasks
-                        and not self._tasks[task_id].is_completed()
-                    ):
-                        # 检查任务是否长时间没有活动
-                        if (
-                            current_time - last_activity_time
-                            > self._deadlock_detection_time
-                        ):
-                            logger.warning(
-                                f"Task {task_id} has been inactive for {self._deadlock_detection_time} seconds. Possible deadlock."
-                            )
-                            # 可以在这里实现恢复策略，例如强制完成或重试任务
-                            try:
-                                # 尝试将长时间无活动的任务标记为失败
-                                if self._tasks[task_id].is_executing():
-                                    await self._tasks[task_id].set_state(
-                                        TaskState.FAILED
-                                    )
-                                    logger.warning(
-                                        f"Marked stuck task {task_id} as FAILED"
-                                    )
-                            except Exception as e:
-                                logger.error(
-                                    f"Error handling stuck task {task_id}: {e}"
-                                )
-
-                # 检查整体进展
+                # 如果没有活动任务、执行中的任务和待处理任务，并且没有输出，则结束
                 if (
-                    current_time - last_progress_time > self._deadlock_detection_time
-                    and self._active_task_executions
-                    and not self._output_queue.empty()
+                    not active_tasks
+                    and active_executions == 0
+                    and pending_in_queue == 0
+                    and not has_output
                 ):
-                    # 长时间没有进展，但有活动任务和输出数据
-                    logger.warning(
-                        f"Potential deadlock detected. No progress for {self._deadlock_detection_time} seconds"
-                    )
-                    # 可以在这里实现恢复策略
+                    logger.debug("所有任务已完成且输出流已耗尽，结束输出流")
+                    break
 
-                # 更新最后检查时间
-                last_deadlock_check_time = current_time
-
-            # 输出队列超时时检查结束条件：
-            # 条件1：当前是否有正在运行的 asyncio Task？
-            if self._active_task_executions:
-                # 有活动任务，等待它们完成或上下文改变
-                logger.debug(
-                    "get_output_stream: Active tasks exist. Waiting for them to complete or context to change."
-                )
-                await asyncio.sleep(0.1)  # 缩短等待时间，提高响应性
-                continue
-
-            # 条件2：没有活动的asyncio Task。是否有就绪的RuleTask？
-            # 使用优先级队列重新填充可运行任务 - 优化2：高效任务调度
-            self._task_priority_queue = PriorityTaskQueue()  # 重置队列
-
-            # 检查所有未完成的任务，将满足条件的加入优先级队列
-            for task_id, task in self._tasks.items():
-                if not task.is_completed() and task.is_condition_meet(self._ctx):
-                    priority = self._rule_priorities.get(task.rule_id, 0)
-                    self._task_priority_queue.put(priority, task_id)
-
-            if len(self._task_priority_queue) > 0:
-                # 有就绪的任务但可能尚未被调度器选中
-                logger.debug(
-                    f"get_output_stream: No active executions, but {len(self._task_priority_queue)} tasks are ready. Yielding briefly."
-                )
-                # 尝试调度优先级最高的任务
-                if not self._task_semaphore.locked():
-                    task_id = self._task_priority_queue.get()
-                    if task_id:
-                        await self._check_and_create_task_if_needed(task_id)
+                # 短暂等待后再次检查
                 await asyncio.sleep(0.1)
-                # 更新进展时间
-                last_progress_time = time.time()
-                continue
+        finally:
+            # 取消监控任务
+            if not monitor_task.done():
+                monitor_task.cancel()
+                try:
+                    await monitor_task
+                except asyncio.CancelledError:
+                    pass
 
-            # 条件3：没有活动的asyncio Task，输出队列为空，且没有可运行的RuleTask
-            # 检查是否所有任务都已完成
-            all_tasks_completed = all(
-                task.is_completed() for task in self._tasks.values()
-            )
+    async def _monitor_tasks_completion(self) -> None:
+        """监控任务完成情况，确保所有任务都能被正确处理"""
+        try:
+            while True:
+                # 检查是否有任务需要调度但尚未调度
+                if len(self._task_priority_queue) > 0:
+                    rule_id = self._task_priority_queue.get()
+                    if rule_id:
+                        await self._check_and_create_task_if_needed(rule_id)
 
-            if all_tasks_completed:
-                logger.debug("All tasks completed. Ending stream.")
-                break
-            elif current_time - last_progress_time > self._deadlock_detection_time * 2:
-                # 如果长时间没有进展，且没有活动任务和可运行任务，可能是死锁
-                logger.warning(
-                    f"No progress for {self._deadlock_detection_time * 2} seconds and no runnable tasks. Possible deadlock."
-                )
-                # 可以选择结束或尝试恢复
-                break
-
-            # 等待一段时间后再检查
-            logger.debug(
-                "No active executions, output queue was empty, waiting for context changes."
-            )
-            await asyncio.sleep(0.5)
-            # 如果没有进展，继续循环
+                # 短暂等待后继续检查
+                await asyncio.sleep(0.1)
+        except asyncio.CancelledError:
+            logger.debug("任务完成监控被取消")
+            raise
+        except Exception as e:
+            logger.error(f"任务完成监控出错: {e}")
 
     async def _monitor_loop(self) -> None:
         """监控循环，检查任务状态和潜在的死锁"""
@@ -506,8 +475,8 @@ class RuleDispatcher:
             current_time = time.time()
 
             # 检查是否有新的输出
-            if not self._output_queue.empty():
-                last_progress_time = current_time
+            # 输出流管理器会自动管理输出流
+            last_progress_time = current_time
 
             # 检查死锁情况 - 每 5 秒检查一次
             if current_time - last_deadlock_check_time > 5:
@@ -542,15 +511,26 @@ class RuleDispatcher:
                                     f"Error handling stuck task {task_id}: {e}"
                                 )
 
-                # 检查整体进展
-                if (
-                    current_time - last_progress_time > self._deadlock_detection_time
-                    and self._active_task_executions
-                    and not self._output_queue.empty()
-                ):
-                    # 长时间没有进展，但有活动任务和输出数据
+                # 检查整体进展 - 更精细的流活动检测
+                inactive_streams = []
+                for stream_id, stream_data in self._output_manager._streams.items():
+                    if not stream_data.get("exhausted", False):
+                        metadata = stream_data.get("metadata")
+                        if metadata and hasattr(metadata, "last_activity_at"):
+                            stream_inactive_time = current_time - metadata.last_activity_at.timestamp()
+                            if stream_inactive_time > self._deadlock_detection_time:
+                                inactive_streams.append((stream_id, metadata.task_id, stream_inactive_time))
+                
+                if inactive_streams and self._active_task_executions:
+                    # 有长时间不活跃的流和活动任务
+                    for stream_id, task_id, inactive_time in inactive_streams:
+                        logger.warning(
+                            f"Stream {stream_id} for task {task_id} has been inactive for {inactive_time:.1f} seconds. Possible deadlock."
+                        )
+                    
+                    # 可以在这里实现针对特定流的恢复策略
                     logger.warning(
-                        f"Potential deadlock detected. No progress for {self._deadlock_detection_time} seconds"
+                        f"Potential deadlock detected. {len(inactive_streams)} streams have no progress for over {self._deadlock_detection_time} seconds"
                     )
                     # 可以在这里实现恢复策略
 
@@ -562,40 +542,73 @@ class RuleDispatcher:
         logger.info("Shutting down RuleDispatcher...")
 
         # 取消所有活动任务
+        cancel_tasks = []
         for task_execution in list(self._active_task_executions):
             if not task_execution.done():
                 task_execution.cancel()
+                cancel_tasks.append(task_execution)
 
         # 等待所有任务完成或取消
-        if self._active_task_executions:
-            await asyncio.gather(*self._active_task_executions, return_exceptions=True)
+        if cancel_tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*cancel_tasks, return_exceptions=True), timeout=2.0
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Timeout waiting for tasks to cancel. Some tasks may still be running."
+                )
 
         # 清理资源
         self._active_task_executions.clear()
         logger.info("All active task executions cancelled or finished.")
 
         # 将所有未完成的任务标记为失败
+        state_change_tasks = []
+        failed_task_ids = []
+
         for task_id, task in self._tasks.items():
             if not task.is_completed():
                 try:
-                    # 使用异步转同步的方式调用 set_state
-                    asyncio.create_task(task.set_state(TaskState.FAILED))
+                    # 创建任务并收集引用，以便等待完成
+                    state_change_task = asyncio.create_task(
+                        task.set_state(TaskState.FAILED)
+                    )
+                    state_change_tasks.append(state_change_task)
+                    failed_task_ids.append(task_id)
+                except Exception as e:
+                    logger.error(f"Failed to set task {task_id} state to FAILED: {e}")
+
+        # 等待所有状态变更完成
+        if state_change_tasks:
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*state_change_tasks, return_exceptions=True),
+                    timeout=1.0,
+                )
+                for task_id in failed_task_ids:
                     logger.debug(
                         f"Marked incomplete task {task_id} as FAILED during shutdown"
                     )
-                except Exception as e:
-                    logger.error(
-                        f"Error marking task {task_id} as FAILED during shutdown: {e}"
-                    )
-
-        # 清空输出队列
-        while not self._output_queue.empty():
-            try:
-                self._output_queue.get_nowait()
-                self._output_queue.task_done()
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "Timeout waiting for task state changes. Some tasks may not be properly marked as failed."
+                )
             except Exception as e:
-                logger.error(f"Error clearing output queue: {e}")
-                break
+                logger.error(f"Error during task state changes: {e}")
+
+        # 清理输出流管理器
+        if hasattr(self, "_output_manager"):
+            try:
+                # 关闭所有流
+                for stream_id in list(self._output_manager._streams.keys()):
+                    self._output_manager.unregister_stream(stream_id)
+            except Exception as e:
+                logger.error(f"Error cleaning up output stream manager: {e}")
+
+        logger.info("RuleDispatcher shutdown complete.")
+
+        # 输出流管理器会在其内部自动清理资源
 
         # 清理其他资源
         self._rule_priorities.clear()
