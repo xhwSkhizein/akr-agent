@@ -5,8 +5,7 @@ from typing import Dict, Any, AsyncGenerator
 from datetime import datetime
 from pydantic import BaseModel, Field
 
-from core.event_bus import EventBus
-from core.event_types import EventType, ChangeType
+from core.event_bus import EventType, ChangeType, EventBus
 
 logger = logging.getLogger(__name__)
 
@@ -166,13 +165,13 @@ class OutputStreamManager:
                     # 生成器已耗尽，标记为已完成
                     logger.info(f"Stream {stream_id} exhausted")
                     exhausted_streams.add(stream_id)
-                    self.make_stream_exhausted(stream_id)
+                    await self.make_stream_exhausted(stream_id)
 
                 except asyncio.CancelledError:
                     # 处理取消操作
                     logger.warning(f"Stream {stream_id} was cancelled")
                     exhausted_streams.add(stream_id)
-                    self.make_stream_exhausted(stream_id)
+                    await self.make_stream_exhausted(stream_id)
                     # 在取消时不抛出异常，而是正常结束流
 
                 except Exception as e:
@@ -190,7 +189,7 @@ class OutputStreamManager:
                             f"Failed to yield error message or update task state: {yield_error}"
                         )
                     exhausted_streams.add(stream_id)
-                    self.make_stream_exhausted(stream_id)
+                    await self.make_stream_exhausted(stream_id)
 
             # 如果还有未耗尽的流，短暂等待后继续
             if len(exhausted_streams) < len(stream_ids):

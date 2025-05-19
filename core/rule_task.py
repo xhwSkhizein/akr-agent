@@ -8,7 +8,7 @@ from core.tools.base import ToolCenter
 from core.rule_config import RuleConfig
 from core.observable_ctx import ObservableCtx
 from core.task_state import TaskState, TaskStateTransitionError
-from core.event_types import EventType, ChangeType
+from core.event_bus import EventType, ChangeType
 
 if TYPE_CHECKING:
     from .dispatcher import RuleDispatcher  # Circular import for type hinting

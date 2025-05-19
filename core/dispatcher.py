@@ -6,7 +6,7 @@ from typing import List, Dict, Set, Any, AsyncGenerator, Optional, Tuple
 from collections import defaultdict
 
 from core.rule_config import RuleConfig
-from core.event_bus import EventBus
+from core.event_bus import EventType, EventBus
 from core.observable_ctx import ObservableCtx
 from core.rule_task import RuleTask
 from core.task_state import TaskState
@@ -108,7 +108,7 @@ class RuleDispatcher:
         self._task_priority_queue = PriorityTaskQueue()
 
         # 订阅上下文变化事件
-        self._event_bus.subscribe("ctx_changed", self._handle_ctx_changed)
+        self._event_bus.subscribe(EventType.CTX_CHANGED, self._handle_ctx_changed)
 
         # 初始化规则
         if initial_rules:

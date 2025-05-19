@@ -1,11 +1,9 @@
 from typing import Any, Dict, Optional
 import logging
 
-from core.event_types import EventType
-
 logger = logging.getLogger(__name__)
 
-from core.event_bus import EventBus
+from core.event_bus import EventType, EventBus
 from core.context import Context
 
 
