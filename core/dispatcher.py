@@ -10,7 +10,6 @@ from core.event_bus import EventBus
 from core.observable_ctx import ObservableCtx
 from core.rule_task import RuleTask
 from core.task_state import TaskState
-from core.chunk import ResponseChunk
 from core.output_stream import OutputStreamManager, StreamMetadata, OutputChunk
 
 
@@ -221,7 +220,9 @@ class RuleDispatcher:
                 return
 
             # 使用类方法检查规则条件，无需创建临时任务对象
-            if not RuleTask.check_rule_condition(rule_config, self._ctx):
+            if not RuleTask.check_condition(
+                condition=rule_config.match_condition, ctx=self._ctx
+            ):
                 logger.debug(
                     f"Rule {rule_id} does not meet the condition. Skipping task creation."
                 )
@@ -517,17 +518,21 @@ class RuleDispatcher:
                     if not stream_data.get("exhausted", False):
                         metadata = stream_data.get("metadata")
                         if metadata and hasattr(metadata, "last_activity_at"):
-                            stream_inactive_time = current_time - metadata.last_activity_at.timestamp()
+                            stream_inactive_time = (
+                                current_time - metadata.last_activity_at.timestamp()
+                            )
                             if stream_inactive_time > self._deadlock_detection_time:
-                                inactive_streams.append((stream_id, metadata.task_id, stream_inactive_time))
-                
+                                inactive_streams.append(
+                                    (stream_id, metadata.task_id, stream_inactive_time)
+                                )
+
                 if inactive_streams and self._active_task_executions:
                     # 有长时间不活跃的流和活动任务
                     for stream_id, task_id, inactive_time in inactive_streams:
                         logger.warning(
                             f"Stream {stream_id} for task {task_id} has been inactive for {inactive_time:.1f} seconds. Possible deadlock."
                         )
-                    
+
                     # 可以在这里实现针对特定流的恢复策略
                     logger.warning(
                         f"Potential deadlock detected. {len(inactive_streams)} streams have no progress for over {self._deadlock_detection_time} seconds"

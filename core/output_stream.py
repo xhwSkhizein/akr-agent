@@ -1,7 +1,7 @@
 import asyncio
 import uuid
 import logging
-from typing import Dict, Any, AsyncGenerator, List, Set, Tuple, Optional
+from typing import Dict, Any, AsyncGenerator
 from datetime import datetime
 from pydantic import BaseModel, Field
 
@@ -28,7 +28,9 @@ class StreamMetadata(BaseModel):
         # 将datetime对象转换为ISO格式字符串
         if "created_at" in data and isinstance(data["created_at"], datetime):
             data["created_at"] = data["created_at"].isoformat()
-        if "last_activity_at" in data and isinstance(data["last_activity_at"], datetime):
+        if "last_activity_at" in data and isinstance(
+            data["last_activity_at"], datetime
+        ):
             data["last_activity_at"] = data["last_activity_at"].isoformat()
         return data
 
@@ -152,8 +154,10 @@ class OutputStreamManager:
                     content = await generator.__anext__()
 
                     # 更新流的最后活动时间
-                    self._streams[stream_id]["metadata"].last_activity_at = datetime.now()
-                    
+                    self._streams[stream_id][
+                        "metadata"
+                    ].last_activity_at = datetime.now()
+
                     # 创建输出块并产生
                     chunk = OutputChunk(content=content, metadata_ref=metadata)
                     yield chunk
@@ -180,7 +184,7 @@ class OutputStreamManager:
                             content=f"Error: {str(e)}", metadata_ref=metadata
                         )
                         yield error_chunk
-                        
+
                     except Exception as yield_error:
                         logger.error(
                             f"Failed to yield error message or update task state: {yield_error}"
@@ -217,5 +221,5 @@ class OutputStreamManager:
                 task_id=metadata.task_id,
                 rule_id=metadata.rule_id,
                 last_activity_at=metadata.last_activity_at.isoformat(),
-                status=metadata.status
+                status=metadata.status,
             )

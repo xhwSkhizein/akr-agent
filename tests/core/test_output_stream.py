@@ -4,7 +4,6 @@ from typing import AsyncGenerator, Dict, Any
 from datetime import datetime
 
 from core.output_stream import OutputStreamManager, StreamMetadata, OutputChunk
-from core.chunk import ResponseChunk
 
 
 async def mock_generator(items, delay=0.01):
