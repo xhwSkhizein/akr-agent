@@ -251,6 +251,10 @@ class RuleTask:
         self._response_full = ""
         self._last_error = None
 
+        logger.info(
+            f"执行任务，tool_name={self.rule_config.tool}, params={tool_params}"
+        )
+
         while retry_count < max_retries:
             try:
                 async for chunk in ToolCenter.run_tool(
@@ -346,7 +350,7 @@ class RuleTask:
             # 1. 准备工具调用参数
             try:
                 tool_params: dict = await self._prepare_tool_params(ctx)
-                logger.debug(
+                logger.info(
                     f"Task {self.task_id}: Tool params prepared: {tool_params}"
                 )
             except Exception as e:

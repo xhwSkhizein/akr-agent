@@ -12,7 +12,8 @@ import os
 
 from core.agent import Agent
 from core.tools.base import ToolCenter
-from core.tools.llm_tool import LLMCallTool
+from core.tools.tool_llm import LLMCallTool
+from core.tools.tool_search import DuckDuckGoSearchTool, TavilySearchTool
 
 
 # 配置日志
@@ -33,9 +34,14 @@ ToolCenter.register(
         stream=True,
     )
 )
-llm_call_tool_def = ToolCenter.get_definition("LLMCallTool")
-logger.info(json.dumps(llm_call_tool_def, indent=2, ensure_ascii=False))
-
+# llm_call_tool_def = ToolCenter.get_definition("LLMCallTool")
+# logger.info(json.dumps(llm_call_tool_def, indent=2, ensure_ascii=False))
+ToolCenter.register(tool=DuckDuckGoSearchTool(), name="DuckDuckGoSearchTool")
+search_ddg_tool_def = ToolCenter.get_definition("DuckDuckGoSearchTool")
+logger.info(json.dumps(search_ddg_tool_def, indent=2, ensure_ascii=False))
+# ToolCenter.register(tool=TavilySearchTool(), name="TavilySearchTool")
+# tavily_search_def = ToolCenter.get_definition("TavilySearchTool")
+# logger.info(json.dumps(tavily_search_def, indent=2, ensure_ascii=False))
 
 # 主函数
 async def main():

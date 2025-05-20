@@ -45,7 +45,7 @@ import asyncio
 import os
 from core.agent import Agent
 from core.tools.base import ToolCenter
-from core.tools.llm_tool import LLMCallTool
+from core.tools.tool_llm import LLMCallTool
 
 # 注册LLM工具
 ToolCenter.register(

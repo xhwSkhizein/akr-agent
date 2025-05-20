@@ -1,3 +1,6 @@
 jinja2
 docstring-parser
 pytest-asyncio
+
+duckduckgo-search
+tavily-python

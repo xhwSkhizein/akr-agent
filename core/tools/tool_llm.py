@@ -1,5 +1,6 @@
 import logging
 import os
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -66,13 +67,17 @@ class LLMCallTool(Tool):
             prompt_detail=prompt_detail,
             **kwargs,
         )
+
+        logger.debug(f"llm tool call, kwargs={kwargs}")
+
         tool_defs = await self._build_tool_defs(**kwargs)
 
         async for chunk in self.llm_client.invoke_stream(
             system_prompt=system_prompt,
             user_input=user_input,
-            tools=tool_defs,
+            messages=[],
             run_tool_func=ToolCenter.run_tool,
+            tools=tool_defs,
         ):
             yield chunk
 
@@ -114,14 +119,16 @@ class LLMCallTool(Tool):
 
     async def _build_tool_defs(self, **kwargs) -> List[Dict[str, Any]]:
         tool_defs = []
-        extra: Dict[str, Any] = kwargs.get("extra", {})
-        config_tool_names: List[str] = extra.get("tools", [])
-        if len(config_tool_names) == 0:
+        config_tool_names: List[str] = kwargs.get("tools", [])
+        logger.debug(f"tool exec depends tools={config_tool_names}")
+        if not config_tool_names or len(config_tool_names) == 0:
             return tool_defs
         for tool_name in config_tool_names:
-            tool_def = ToolCenter.get_definition(tool_name)
+            tool_def = ToolCenter.get_definition(name=tool_name)
             if tool_def:
-                tool_defs.append(tool_def)
-        logger.info(f"根据 extra 配置，获取到可使用的工具: {tool_defs}")
+                tool_defs.append({"type": "function", "function": tool_def})
+                logger.debug(f"根据 extra 配置，获取到可使用的工具: {tool_name} {tool_defs}")
+            else:
+                logger.warning(f"根据 extra 配置，无法获取到对应的 tools={tool_name}, def={tool_def}")
 
         return tool_defs

@@ -21,12 +21,6 @@ tool_params:
     - prompt
     - prompt_detail
   extra:
-    model: gpt-4o-mini
-    temperature: 0.7
-    max_tokens: 1024
-    stream: True
     tools:
-      - DdgSearchTool
-      - CodeReplTool
 tool_result_target: AS_CONTEXT
 tool_result_key: intent_analyze_result

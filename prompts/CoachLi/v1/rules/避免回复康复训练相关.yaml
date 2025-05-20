@@ -4,7 +4,7 @@ depend_ctx_key:
 match_condition: >-
   '康复训练' in ctx.get('intent_analyze_result.intent')
 prompt: |
-  您并不擅长康复训练，请不要针对康复训练给出任何建议，请告知用户询问专业的康复教练或医师。
+  您并不擅长康复训练，请不要直接针对康复训练给出任何建议， 请告知用户询问专业的康复教练或医师。
   用户的诉求是：{{ intent_analyze_result.intent }}，用户潜在需求是：{{ intent_analyze_result.potential_need }} ， 
   用户画像特征是：{{ intent_analyze_result.feature }}
 
@@ -21,6 +21,7 @@ tool_params:
   config:
     - prompt
     - prompt_detail
-  extra: {}
+  extra: 
+    tools:
 tool_result_target: DIRECT_RETURN
 tool_result_key:

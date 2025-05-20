@@ -433,7 +433,7 @@ class RuleDispatcher:
                     and pending_in_queue == 0
                     and not has_output
                 ):
-                    logger.debug("所有任务已完成且输出流已耗尽，结束输出流")
+                    logger.info("所有任务已完成且输出流已耗尽，结束输出流")
                     break
 
                 # 短暂等待后再次检查

@@ -90,14 +90,40 @@ class ToolCenter:
 
     @staticmethod
     def register(
-        tool: Union[Tool, Callable, Type[Tool]], name: Optional[str] = None
-    ) -> None:
+        tool: Union[Tool, Callable, Type[Tool], None] = None, *, name: Optional[str] = None
+    ) -> Union[Callable[[Union[Tool, Callable, Type[Tool]]], Union[Tool, Callable, Type[Tool]]], None]:
         """
-        注册工具
+        注册工具，支持两种用法：
+        1. 作为普通方法：ToolCenter.register(tool, name="tool_name")
+        2. 作为装饰器：@ToolCenter.register 或 @ToolCenter.register(name="tool_name")
 
         Args:
             tool: 工具实例、函数或工具类
             name: 工具名称，如果为 None 则使用工具的 name 属性或函数名
+            
+        Returns:
+            当作为装饰器使用时，返回装饰后的函数或类；否则返回 None
+        """
+        # 作为装饰器使用，无参数形式：@ToolCenter.register
+        if tool is not None and name is None:
+            return ToolCenter._register_tool(tool, name)
+            
+        # 作为装饰器使用，有参数形式：@ToolCenter.register(name="tool_name")
+        if tool is None:
+            def decorator(tool_func: Union[Tool, Callable, Type[Tool]]) -> Union[Tool, Callable, Type[Tool]]:
+                ToolCenter._register_tool(tool_func, name)
+                return tool_func
+            return decorator
+            
+        # 作为普通方法使用：ToolCenter.register(tool, name="tool_name")
+        return ToolCenter._register_tool(tool, name)
+    
+    @staticmethod
+    def _register_tool(
+        tool: Union[Tool, Callable, Type[Tool]], name: Optional[str] = None
+    ) -> None:
+        """
+        实际注册工具的内部方法
         """
         if isinstance(tool, type) and issubclass(tool, Tool):
             # 如果是工具类，实例化它
@@ -120,6 +146,8 @@ class ToolCenter:
 
         else:
             raise TypeError(f"不支持的工具类型: {type(tool)}")
+        
+        return None
 
     @staticmethod
     def get(name: str) -> Optional[Union[Tool, Callable]]:

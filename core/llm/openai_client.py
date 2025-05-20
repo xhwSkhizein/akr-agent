@@ -3,27 +3,31 @@ OpenAI LLM 客户端实现
 """
 
 import logging
+import asyncio
+from typing import Any, AsyncGenerator, Dict, Optional, List, Callable
+import json
+import openai
+from openai import AsyncOpenAI
+from openai.types.chat import ChatCompletionChunk
+from openai.types.chat.chat_completion_message_tool_call import (
+    ChatCompletionMessageToolCall,
+)
+
+from core.llm.base import LLMClient
+
 
 logger = logging.getLogger(__name__)
-
-from typing import Any, AsyncGenerator, Dict, Optional
-import openai
-import asyncio
-from openai import AsyncOpenAI
-from openai.types.chat.chat_completion import ChatCompletion
-
-from .base import LLMClient
 
 
 class OpenAIClient(LLMClient):
     """
-    OpenAI API 客户端实现
+    OpenAI API 客户端实现 (支持 tool_calls)
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "gpt-4o-mini",
+        model: str = "gpt-4o-mini",  # 建议使用支持工具调用的较新模型
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         **kwargs,
@@ -36,30 +40,56 @@ class OpenAIClient(LLMClient):
             model: 模型名称
             temperature: 温度参数
             max_tokens: 最大令牌数
-            **kwargs: 其他 OpenAI API 参数
+            **kwargs: 其他 OpenAI API 参数 (例如 base_url, timeout 等)
         """
-        self.client = AsyncOpenAI(api_key=api_key)
+        self.client = AsyncOpenAI(
+            api_key=api_key, **kwargs.pop("client_args", {})
+        )  # 传递 client 的额外参数
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self.extra_params = kwargs
+        self.extra_params = kwargs  # 其他传递给 completions.create 的参数
         logging.info(f"初始化 OpenAI 客户端，模型: {model}")
 
     async def invoke_stream(
-        self, system_prompt: str, user_input: str, **kwargs
+        self,
+        system_prompt: str,
+        user_input: str,
+        messages: Optional[List[Dict[str, Any]]] = None,
+        run_tool_func: Optional[Callable[[str, str], Any]] = None,
+        **kwargs,
     ) -> AsyncGenerator[str, None]:
         """
-        流式调用 OpenAI API 并返回响应流
+        流式调用 OpenAI API 并返回响应流，支持工具调用。
 
         Args:
-            prompt: 提示词
-            **kwargs: 覆盖默认参数
+            system_prompt: 系统提示词 (仅在初次调用或 messages 为 None 时用于构建初始消息)
+            user_input: 用户输入 (仅在初次调用或 messages 为 None 时用于构建初始消息)
+            messages: 可选的，预设的消息列表。如果提供，则忽略 system_prompt 和 user_input 来构建初始消息。
+            run_tool_func: 可选的异步函数，用于执行工具调用。签名应为: async def run_tool(tool_name: str, tool_args: str) -> Any
+            **kwargs: 覆盖默认参数或传递额外参数 (如 tools, tool_choice)
 
         Yields:
-            响应片段
+            响应片段 (str)
         """
-        params = self._prepare_params(system_prompt, user_input, **kwargs)
-        params["stream"] = True
+        current_messages: List[Dict[str, Any]]
+        if messages is not None:
+            current_messages = list(messages)  # 使用提供的消息列表副本
+        else:
+            current_messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_input},
+            ]
+
+        # 准备 API 调用参数
+        # 注意：kwargs 传递给 _prepare_params，它会合并实例属性和这些运行时参数
+        api_params = self._prepare_params(
+            system_prompt=system_prompt,  # 传递以备 _prepare_params 可能的初始构建逻辑
+            prompt=user_input,  # 同上
+            current_messages=current_messages,  # 最重要：传递当前消息历史
+            **kwargs,  # 包含 tools, tool_choice 等
+        )
+        api_params["stream"] = True
 
         max_retries = 3
         retry_count = 0
@@ -67,147 +97,676 @@ class OpenAIClient(LLMClient):
 
         while retry_count <= max_retries:
             try:
-                logging.debug(f"OPENAI final request params: {params}")
-                response_stream: AsyncGenerator[ChatCompletion, None] = (
-                    await self.client.chat.completions.create(**params)
+                logging.debug(f"OPENAI 请求参数: {api_params}")
+                response_stream: AsyncGenerator[ChatCompletionChunk, None] = (
+                    await self.client.chat.completions.create(**api_params)
                 )
-                # 2. 处理流
-                function_call_buffer = {}
-                collecting_function_call = False
+
+                # 用于累积当前LLM响应中的 tool_calls 数据
+                # key: tool_call_id, value: {"id": ..., "type": "function", "function_name": ..., "function_arguments": ...}
+                active_tool_calls_data: Dict[str, Dict[str, str]] = {}
+                tool_calls = []
+                # 用于累积本轮LLM回复的文本内容 (如果LLM在要求工具调用前有说话)
+                # current_assistant_content_parts: List[str] = []
+
                 async for chunk in response_stream:
+                    if not chunk.choices:
+                        continue
                     delta = chunk.choices[0].delta
+                    finish_reason = chunk.choices[0].finish_reason
 
-                    # 2.1 处理 function_call
-                    if hasattr(delta, "function_call") and delta.function_call:
-                        collecting_function_call = True
-                        for k, v in delta.function_call.items():
-                            function_call_buffer[k] = (
-                                function_call_buffer.get(k, "") + v
-                            )
-
-                        # function_call 结束条件：arguments 字段已完整
-                        if (
-                            "name" in function_call_buffer
-                            and "arguments" in function_call_buffer
-                            and delta.function_call.get("arguments") is not None
-                        ):
-                            # 2.2 工具调用
-                            tool_name = function_call_buffer["name"]
-                            tool_args = function_call_buffer["arguments"]
-                            logger.info(f"开始调用工具: {tool_name}, 参数: {tool_args}")
-                            run_tool_func = kwargs.get("run_tool_func")
-                            tool_result = await run_tool_func(tool_name, tool_args)
-                            logger.info(
-                                f"工具 name:{tool_name}, args: {tool_args} 调用结果: {tool_result}"
-                            )
-                            # 2.3 把工具结果作为新的 message 继续对话
-                            params["messages"].append(
-                                {
-                                    "role": "assistant",
-                                    "content": None,
-                                    "function_call": {
-                                        "name": tool_name,
-                                        "arguments": tool_args,
-                                    },
-                                }
-                            )
-                            params["messages"].append(
-                                {
-                                    "role": "function",
-                                    "name": tool_name,
-                                    "content": str(tool_result),
-                                }
-                            )
-                            # 递归调用自身，继续流式输出
-                            async for content in self.invoke_stream(
-                                system_prompt, user_input, **params
-                            ):
-                                yield content
-                            return  # 结束本轮
-                    elif hasattr(delta, "content") and delta.content:
-                        # 普通内容流式输出
+                    # 1. 处理普通文本内容流
+                    if delta and delta.content:
+                        # current_assistant_content_parts.append(delta.content)
                         yield delta.content
-                # 3. 如果没有 function_call，直接结束
-                if collecting_function_call and function_call_buffer:
-                    # 可能 function_call 没有完整返回
-                    yield f"[Function call incomplete: {function_call_buffer}]"
+
+                    # 2. 处理 tool_calls 块
+                    if delta and delta.tool_calls:
+                        tc_chunk_list = delta.tool_calls
+                        for tc_chunk in tc_chunk_list:
+                            logger.debug(f"PROCESS TOOL CALL CHUNK, {tc_chunk}")
+                            if len(tool_calls) <= tc_chunk.index:
+                                tool_calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                            tc = tool_calls[tc_chunk.index]
+
+                            if tc_chunk.id:
+                                tc["id"] += tc_chunk.id
+                            if tc_chunk.function.name:
+                                tc["function"]["name"] += tc_chunk.function.name
+                            if tc_chunk.function.arguments:
+                                tc["function"]["arguments"] += tc_chunk.function.arguments
+
+                    # 3. 当LLM指示工具调用完成时 (或者流自然结束)
+                    if finish_reason == "tool_calls":
+                        if len(tool_calls) == 0:
+                            logger.warning(
+                                "finish_reason 是 'tool_calls' 但没有收集到工具调用数据。"
+                            )
+                            # 这种情况不应该发生，但以防万一
+                            break
+
+                        if not run_tool_func:
+                            yield "\n[错误: LLM请求工具调用，但未提供 'run_tool_func' 来执行它们。]\n"
+                            logger.error("LLM请求工具调用，但 'run_tool_func' 未提供。")
+                            return  # 结束生成
+
+                        # 3.1 构建助手消息历史（包含工具调用请求）
+                        # streamed_content = "".join(current_assistant_content_parts)
+                        # current_assistant_content_parts.clear() # 清空，为下一轮准备 (如果递归)
+
+                        logger.info(
+                            f"llm finsih with tool_calls, {tool_calls}"
+                        )
+
+                        assistant_tool_calls_list: List[ChatCompletionMessageToolCall] = []
+                        tools_to_execute_details = []  # 用于实际执行
+
+                        for tool_call in tool_calls:
+                            tc_id = tool_call['id']
+                            function_name = tool_call['function']['name']
+                            args_json = tool_call['function']['arguments']
+                            function_args = json.loads(args_json)
+                            logger.info(f"parse toolcall, {tc_id}, {function_name}, {args_json}, {function_args}")
+                            if function_name and tc_id:  # 参数可能是空字符串，但名称和ID必须有
+                                assistant_tool_calls_list.append(
+                                    ChatCompletionMessageToolCall(
+                                        id=tc_id,
+                                        type="function",  # OpenAI 目前只支持 function 类型
+                                        function={
+                                            "name": function_name,
+                                            "arguments": args_json,
+                                        },
+                                    )
+                                )
+                                tools_to_execute_details.append({"id": tc_id, "name": function_name, "arguments": function_args})
+                            else:
+                                logger.warning(
+                                    f"收集到的工具调用数据不完整，ID {tc_id}: {tool_call}"
+                                )
+
+                        if not assistant_tool_calls_list:
+                            logger.error(
+                                "finish_reason='tool_calls' 但没有有效的工具调用可执行。"
+                            )
+                            yield "\n[错误: LLM请求工具调用，但未能解析出有效的工具信息。]\n"
+                            return
+                        logger.info(
+                            f"add new Tool Call to Current Messages, tool_calls={assistant_tool_calls_list}"
+                        )
+                        current_messages.append(
+                            {
+                                "role": "assistant",
+                                "content": None,  # 文本内容已经通过 yield 流式输出了
+                                "tool_calls": [
+                                    # SDK v1.x ChatCompletionMessageToolCall is not directly JSON serializable for message history
+                                    # We need to convert them to dicts if we were to manually build this
+                                    # However, the openai library handles this internally if we pass the objects.
+                                    # For clarity and if current_messages is used outside this specific SDK context,
+                                    # converting to dict structure matching API spec is safer.
+                                    {
+                                        "id": tc.id,
+                                        "type": tc.type,
+                                        "function": {
+                                            "name": tc.function.name,
+                                            "arguments": tc.function.arguments,
+                                        },
+                                    }
+                                    for tc in assistant_tool_calls_list
+                                ],
+                            }
+                        )
+
+                        # 3.2 执行工具
+                        tool_results_messages: List[Dict[str, Any]] = []
+                        # 可以考虑使用 asyncio.gather 并行执行独立的工具
+                        for tool_data in tools_to_execute_details:
+                            tool_name = tool_data["name"]
+                            tool_args = tool_data["arguments"]
+                            tool_call_id = tool_data["id"]
+
+                            logger.info(
+                                f"开始调用工具: {tool_name}, 参数: {tool_args}, ID: {tool_call_id}"
+                            )
+                            try:
+                                # 调用 run_tool_func，它可能返回协程或异步生成器
+                                tool_output = run_tool_func(tool_name, **tool_args)
+
+                                tool_result_content = ""
+                                if isinstance(tool_output, AsyncGenerator):
+                                    # 如果是异步生成器，累积其所有输出
+                                    accumulated_parts = []
+                                    async for part in tool_output:
+                                        accumulated_parts.append(str(part))
+                                    tool_result_content = "".join(accumulated_parts)
+                                    if (
+                                        not tool_result_content
+                                        and not accumulated_parts
+                                    ):  # 区分空字符串和无任何 yield
+                                        tool_result_content = (
+                                            "[工具执行了，但没有产生任何内容]"
+                                        )
+                                elif asyncio.iscoroutine(tool_output):
+                                    # 如果是协程，直接 await
+                                    tool_result_content = await tool_output
+                                else:
+                                    # 如果是同步函数返回的直接结果 (尽管 run_tool_func 期望是 async)
+                                    # 或者其他不期望的类型，先尝试转字符串
+                                    logger.warning(
+                                        f"工具 {tool_name} 返回了非预期类型: {type(tool_output)}。尝试转为字符串。"
+                                    )
+                                    tool_result_content = str(tool_output)
+
+                                logger.info(
+                                    f"工具 {tool_name} (ID: {tool_call_id}) 调用结果: {tool_result_content}"
+                                )
+                                tool_results_messages.append(
+                                    {
+                                        "role": "tool",
+                                        "tool_call_id": tool_call_id,
+                                        "name": tool_name,
+                                        "content": str(
+                                            tool_result_content
+                                        ),  # 结果必须是字符串
+                                    }
+                                )
+                            except Exception as e:
+                                logger.error(
+                                    f"工具 {tool_name} (ID: {tool_call_id}) 执行失败: {e}",
+                                    exc_info=True,
+                                )
+                                tool_results_messages.append(
+                                    {
+                                        "role": "tool",
+                                        "tool_call_id": tool_call_id,
+                                        "name": tool_name,
+                                        "content": f"执行工具 {tool_name} 时出错: {str(e)}",
+                                    }
+                                )
+
+                        current_messages.extend(tool_results_messages)
+
+                        # 3.3 带着工具结果递归调用，继续获取LLM响应
+                        # 清空 active_tool_calls_data 为下一轮 LLM 响应做准备 (虽然在递归调用中会是新的实例)
+                        active_tool_calls_data.clear()
+
+                        async for content_piece in self.invoke_stream(
+                            system_prompt=system_prompt,  # 这些在递归中主要用于_prepare_params的默认参数
+                            user_input=user_input,  # 实际历史由 messages 控制
+                            messages=current_messages,  # 传递更新后的完整消息历史
+                            run_tool_func=run_tool_func,  # 传递工具执行函数
+                            **kwargs,  # 传递其他参数如 tools, tool_choice
+                        ):
+                            yield content_piece
+                        return  # 结束本轮 invoke_stream，因为递归调用已处理后续
+
+                # 4. 如果流正常结束 (finish_reason='stop', 'length', etc.) 且没有未处理的工具调用
+                if active_tool_calls_data and finish_reason != "tool_calls":
+                    # 这通常不应该发生，如果LLM打算调用工具，finish_reason应该是tool_calls
+                    logger.warning(
+                        f"流结束 (finish_reason: {finish_reason})，但仍有未处理的工具调用数据: {active_tool_calls_data}"
+                    )
+                    yield f"\n[警告: 流意外结束，可能存在未完成的工具调用请求: {list(active_tool_calls_data.keys())}]\n"
+
+                break  # 成功完成或正常结束，退出重试循环
 
             except openai.RateLimitError as e:
                 retry_count += 1
                 if retry_count <= max_retries:
                     wait_time = backoff_factor**retry_count
                     logger.warning(
-                        f"Rate limit exceeded. Retrying in {wait_time}s. Attempt {retry_count}/{max_retries}"
+                        f"API速率限制。将在 {wait_time}s 后重试。尝试 {retry_count}/{max_retries}"
                     )
                     await asyncio.sleep(wait_time)
-                    continue
                 else:
-                    yield f"错误: API速率限制超出，请稍后再试。"
-
-            except openai.AuthenticationError:
-                logger.error("OpenAI API认证失败，请检查API密钥")
-                yield "错误: API认证失败，请检查API密钥配置。"
+                    logger.error(f"API速率限制，已达最大重试次数: {e}")
+                    yield "\n错误: API速率限制超出，请稍后再试。\n"
+                    break
+            except openai.AuthenticationError as e:
+                logger.error(f"OpenAI API认证失败: {e}", exc_info=True)
+                yield "\n错误: API认证失败，请检查API密钥配置。\n"
                 break
-
             except (openai.APIConnectionError, asyncio.TimeoutError) as e:
                 retry_count += 1
                 if retry_count <= max_retries:
                     wait_time = backoff_factor**retry_count
                     logger.warning(
-                        f"连接错误: {e}. 将在{wait_time}秒后重试. 尝试 {retry_count}/{max_retries}"
+                        f"连接错误: {e}. 将在 {wait_time}s 后重试。尝试 {retry_count}/{max_retries}"
                     )
                     await asyncio.sleep(wait_time)
-                    continue
                 else:
-                    yield f"错误: 连接OpenAI API失败: {e}"
-
+                    logger.error(f"连接OpenAI API失败，已达最大重试次数: {e}")
+                    yield f"\n错误: 连接OpenAI API失败: {e}\n"
+                    break
             except asyncio.CancelledError:
                 logger.info("OpenAI API请求被取消")
-                break
-
+                break  # 不再重试
             except Exception as e:
-                logger.error(f"OpenAI API调用未预期错误: {e}", exc_info=True)
-                yield f"错误: {str(e)}"
-                break
-            # 如果没有异常，退出重试循环
-            break
+                logger.error(f"OpenAI API调用发生未预期错误: {e}", exc_info=True)
+                yield f"\n错误: {str(e)}\n"
+                break  # 不再重试未知错误
 
     def _prepare_params(
-        self, system_prompt: str, prompt: str, **kwargs
+        self,
+        system_prompt: str,
+        prompt: str,
+        current_messages: Optional[List[Dict[str, Any]]] = None,
+        **kwargs,
     ) -> Dict[str, Any]:
         """
         准备 API 调用参数
 
         Args:
-            prompt: 提示词
-            **kwargs: 覆盖默认参数
+            system_prompt: 系统提示 (用于 current_messages 为 None 时)
+            prompt: 用户提示 (用于 current_messages 为 None 时)
+            current_messages: 当前的对话消息列表
+            **kwargs: 运行时参数，会覆盖实例的默认设置
 
         Returns:
             API 调用参数字典
         """
-        # 基本参数
-        params = {
-            "model": kwargs.get("model", self.model),
-            "temperature": kwargs.get("temperature", self.temperature),
-            "messages": [
+        # 优先使用 current_messages (如果提供)
+        if current_messages:
+            messages_payload = current_messages
+        else:
+            messages_payload = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": prompt},
-            ],
-            "tools": kwargs.get("tools", []),
+            ]
+
+        # 基本参数，允许被 kwargs 覆盖
+        params: Dict[str, Any] = {
+            "model": kwargs.get("model", self.model),
+            "temperature": kwargs.get("temperature", self.temperature),
+            "messages": messages_payload,
         }
 
-        # 添加可选参数
-        if self.max_tokens is not None:
-            params["max_tokens"] = kwargs.get("max_tokens", self.max_tokens)
+        # 可选参数
+        max_tokens_to_use = kwargs.get("max_tokens", self.max_tokens)
+        if max_tokens_to_use is not None:
+            params["max_tokens"] = max_tokens_to_use
 
-        # 添加额外参数
+        # 工具相关参数 (来自 kwargs)
+        if "tools" in kwargs:
+            params["tools"] = kwargs["tools"]
+        if (
+            "tool_choice" in kwargs
+        ):  # e.g., "auto", "none", {"type": "function", "function": {"name": "my_function"}}
+            params["tool_choice"] = kwargs["tool_choice"]
+
+        # 合并 self.extra_params (kwargs 中未指定的参数)
         for key, value in self.extra_params.items():
-            if key not in params:
-                params[key] = kwargs.get(key, value)
+            if key not in params:  # 避免覆盖已经从 kwargs 或方法固定设置的参数
+                params[key] = value
 
-        # 添加系统提示词（如果提供）
-        system_prompt = kwargs.get("system_prompt")
-        if system_prompt:
-            params["messages"].insert(0, {"role": "system", "content": system_prompt})
+        # 确保 kwargs 中其他未明确处理的参数也被添加，这允许完全的灵活性
+        # 但要小心不要覆盖核心参数如 'model', 'messages', 'stream' 等已被设置的
+        # 这个逻辑可以更精细，但通常 self.extra_params 和显式 kwargs 已经覆盖多数情况
+        # for key, value in kwargs.items():
+        #     if key not in params and key not in ["system_prompt", "prompt", "current_messages", "client_args"]:
+        #         params[key] = value
+        # 上面的逻辑可能过于宽泛，如果kwargs包含内部使用的如system_prompt，不应直接加入params
+        # 通常 tools, tool_choice, response_format 等应该在kwargs中明确传递给completions.create
+        # self.extra_params 可以用来存放一些不常变动的API参数。
 
         return params
+
+
+# import logging
+
+# logger = logging.getLogger(__name__)
+
+# from typing import Any, AsyncGenerator, Callable, Dict, Optional
+# import openai
+# import asyncio
+# from openai import AsyncOpenAI
+# from openai.types.chat.chat_completion import ChatCompletion
+
+# from .base import LLMClient
+
+
+# class OpenAIClient(LLMClient):
+#     """
+#     OpenAI API 客户端实现
+#     """
+
+#     def __init__(
+#         self,
+#         api_key: Optional[str] = None,
+#         model: str = "gpt-4o-mini",
+#         temperature: float = 0.7,
+#         max_tokens: Optional[int] = None,
+#         **kwargs,
+#     ):
+#         """
+#         初始化 OpenAI 客户端
+
+#         Args:
+#             api_key: OpenAI API 密钥，如果为 None 则使用环境变量
+#             model: 模型名称
+#             temperature: 温度参数
+#             max_tokens: 最大令牌数
+#             **kwargs: 其他 OpenAI API 参数
+#         """
+#         self.client = AsyncOpenAI(api_key=api_key)
+#         self.model = model
+#         self.temperature = temperature
+#         self.max_tokens = max_tokens
+#         self.extra_params = kwargs
+#         logging.info(f"初始化 OpenAI 客户端，模型: {model}")
+
+#     async def invoke_stream(
+#         self,
+#         system_prompt: str,
+#         user_input: str,
+#         messages: Optional[list] = None,
+#         run_tool_func: Callable = None,
+#         **kwargs,
+#     ) -> AsyncGenerator[str, None]:
+#         """
+#         流式调用 OpenAI API 并返回响应流
+
+#         Args:
+#             system_prompt: 系统提示词 (仅在初次调用时或 messages 为 None 时使用)
+#             user_input: 用户输入 (仅在初次调用时或 messages 为 None 时使用)
+#             messages: 可选的，预设的消息列表。如果提供，则忽略 system_prompt 和 user_input。
+#             **kwargs: 覆盖默认参数
+
+#         Yields:
+#             响应片段
+#         """
+#         current_messages = messages
+#         if current_messages is None:  # 初始调用
+#             # 构建初始消息列表，确保 _prepare_params 不会重复添加
+#             current_messages = [
+#                 {"role": "system", "content": system_prompt},
+#                 {"role": "user", "content": user_input},
+#             ]
+
+#         # 准备参数时传入 messages
+#         params = self._prepare_params(
+#             system_prompt=system_prompt,  # 仍可用于 _prepare_params 中其他逻辑
+#             prompt=user_input,  # 同上
+#             current_messages=current_messages,  # 关键：传入当前消息历史
+#             **kwargs,
+#         )
+#         params["stream"] = True
+
+#         max_retries = 3
+#         retry_count = 0
+#         backoff_factor = 2
+
+#         while retry_count <= max_retries:
+#             try:
+#                 logging.debug(f"OPENAI final request params: {params}")
+#                 response_stream: AsyncGenerator[ChatCompletion, None] = (
+#                     await self.client.chat.completions.create(**params)
+#                 )
+
+#                 # 用于累积 tool_calls 的数据
+#                 # key: tool_call_index (or tool_call_id if stable early), value: {"id": "...", "name": "...", "arguments": "..."}
+#                 active_tool_calls_data = {}
+#                 # key: tool_call_index, value: function_name_buffer
+#                 tool_call_name_buffers = {}
+#                 # key: tool_call_index, value: arguments_buffer
+#                 tool_call_args_buffers = {}
+
+#                 async for chunk in response_stream:
+#                     delta = chunk.choices[0].delta
+#                     finish_reason = chunk.choices[0].finish_reason
+
+#                     # 2.1 处理 tool_calls
+#                     if delta and delta.tool_calls:
+#                         for tool_call_chunk in delta.tool_calls:
+#                             index = tool_call_chunk.index  # v1.1.0+ SDK provides index
+#                             # For older or direct API, you might need to manage indices manually
+#                             # Or, if id is stable early, use id as key.
+#                             # Let's assume `id` is available and stable for each tool call early.
+
+#                             current_tool_id = tool_call_chunk.id
+#                             if current_tool_id:  # id is now present
+#                                 if current_tool_id not in active_tool_calls_data:
+#                                     active_tool_calls_data[current_tool_id] = {
+#                                         "id": current_tool_id,
+#                                         "name": "",
+#                                         "arguments": "",
+#                                     }
+
+#                             # Prefer using ID if available, otherwise fall back to index
+#                             # For simplicity, this example will assume ID is the primary key once seen
+#                             # and that arguments for a given ID/index are accumulated.
+#                             # A more robust solution might need to handle partial IDs or names first.
+
+#                             # Let's simplify and assume we use the ID from the chunk if present,
+#                             # and buffer based on that. If a tool call starts, it should have an ID.
+
+#                             if tool_call_chunk.function:
+#                                 if tool_call_chunk.function.name:
+#                                     active_tool_calls_data[current_tool_id][
+#                                         "name"
+#                                     ] += tool_call_chunk.function.name
+#                                 if tool_call_chunk.function.arguments:
+#                                     active_tool_calls_data[current_tool_id][
+#                                         "arguments"
+#                                     ] += tool_call_chunk.function.arguments
+
+#                     # 2.1.1 处理普通内容流
+#                     if delta and delta.content:
+#                         yield delta.content
+
+#                     # 2.2 检查是否完成 tool_calls (当 LLM 表示它完成了工具调用请求时)
+#                     if finish_reason == "tool_calls":
+#                         assistant_message_tool_calls = []
+#                         tools_to_run_details = []
+
+#                         for tool_id, tool_data in active_tool_calls_data.items():
+#                             if (
+#                                 tool_data["name"] and tool_data["arguments"]
+#                             ):  # Ensure complete
+#                                 assistant_message_tool_calls.append(
+#                                     {
+#                                         "id": tool_id,
+#                                         "type": "function",  # Assuming all tools are functions for now
+#                                         "function": {
+#                                             "name": tool_data["name"],
+#                                             "arguments": tool_data["arguments"],
+#                                         },
+#                                     }
+#                                 )
+#                                 logger.info(f"add tool_data, {tool_data}")
+#                                 tools_to_run_details.append(tool_data)
+#                             else:
+#                                 # Handle incomplete tool call data (log, error, etc.)
+#                                 logger.warning(
+#                                     f"Incomplete tool call data for ID {tool_id}: {tool_data}"
+#                                 )
+
+#                         if not tools_to_run_details:
+#                             logger.info(
+#                                 "Finish reason was 'tool_calls' but no complete tools found to run."
+#                             )
+#                             # Potentially yield an error or just break if no content was yielded either
+#                             break
+
+#                         # 记录LLM发起的工具调用请求
+#                         # params["messages"] is the list sent to the API.
+#                         # We need to append the assistant's response that included the tool_calls
+#                         # before appending the tool results.
+#                         # The `current_messages` should be the one tracking conversation history.
+
+#                         current_messages.append(
+#                             {
+#                                 "role": "assistant",
+#                                 "content": None,  # Or any text content that came before/with tool_calls
+#                                 "tool_calls": assistant_message_tool_calls,
+#                             }
+#                         )
+
+#                         if not run_tool_func:
+#                             yield "[Error: 'run_tool_func' not provided to handle tool calls]"
+#                             return
+
+#                         # 执行所有工具 (可以考虑并行 asyncio.gather)
+#                         tool_results_messages = []
+#                         for tool_data in tools_to_run_details:
+#                             tool_name = tool_data["name"]
+#                             tool_args = tool_data["arguments"]
+#                             tool_id = tool_data["id"]
+#                             logger.info(
+#                                 f"开始调用工具: {tool_name}, 参数: {tool_args}, ID: {tool_id}"
+#                             )
+
+#                             try:
+#                                 tool_result_content = await run_tool_func(
+#                                     tool_name, tool_args
+#                                 )
+#                                 logger.info(
+#                                     f"工具 name:{tool_name}, args: {tool_args}, ID: {tool_id} 调用结果: {tool_result_content}"
+#                                 )
+#                                 tool_results_messages.append(
+#                                     {
+#                                         "role": "tool",
+#                                         "tool_call_id": tool_id,
+#                                         "name": tool_name,  # name is part of the spec for tool role message
+#                                         "content": str(tool_result_content),
+#                                     }
+#                                 )
+#                             except Exception as e:
+#                                 logger.error(
+#                                     f"工具 {tool_name} (ID: {tool_id}) 执行失败: {e}",
+#                                     exc_info=True,
+#                                 )
+#                                 tool_results_messages.append(
+#                                     {
+#                                         "role": "tool",
+#                                         "tool_call_id": tool_id,
+#                                         "name": tool_name,
+#                                         "content": f"Error executing tool {tool_name}: {str(e)}",
+#                                     }
+#                                 )
+
+#                         current_messages.extend(tool_results_messages)
+
+#                         # 重置 tool_call 累加器
+#                         active_tool_calls_data.clear()
+
+#                         # 递归调用自身，继续流式输出，传入更新后的消息历史
+#                         # Note: system_prompt and user_input are not directly used here if messages is passed.
+#                         # They could be None or kept for _prepare_params's other potential uses.
+#                         async for content_piece in self.invoke_stream(
+#                             system_prompt,
+#                             user_input,
+#                             messages=current_messages,
+#                             **kwargs,
+#                         ):
+#                             yield content_piece
+#                         return  # 结束本轮流
+
+#                 # 3. 如果流结束但 finish_reason 不是 tool_calls (e.g. "stop" or "length")
+#                 #    或者流结束了但有未处理完的 tool_call 数据（这种情况理论上不应发生如果 finish_reason 正确）
+#                 if active_tool_calls_data:
+#                     logger.warning(
+#                         f"Stream ended with incomplete tool call data: {active_tool_calls_data}"
+#                     )
+#                     yield f"[Warning: Stream ended with incomplete tool call data: {active_tool_calls_data}]"
+
+#                 break  # 成功，退出重试循环
+
+#             # ... (error handling remains similar, ensure `current_messages` is handled if retrying) ...
+#             except openai.RateLimitError as e:
+#                 # ...
+#                 if retry_count > max_retries:
+#                     yield f"错误: API速率限制超出，请稍后再试。"  # No break, loop condition handles
+
+#             except (openai.APIConnectionError, asyncio.TimeoutError) as e:
+#                 retry_count += 1
+#                 if retry_count <= max_retries:
+#                     wait_time = backoff_factor**retry_count
+#                     logger.warning(
+#                         f"连接错误: {e}. 将在{wait_time}秒后重试. 尝试 {retry_count}/{max_retries}"
+#                     )
+#                     await asyncio.sleep(wait_time)
+#                     continue
+#                 else:
+#                     yield f"错误: 连接OpenAI API失败: {e}"
+
+#             # ... other exceptions
+#             except openai.AuthenticationError:
+#                 logger.error("OpenAI API认证失败，请检查API密钥")
+#                 yield "错误: API认证失败，请检查API密钥配置。"
+#                 break
+
+#             except asyncio.CancelledError:
+#                 logger.info("OpenAI API请求被取消")
+#                 break
+
+#             except Exception as e:
+#                 logger.error(f"OpenAI API调用未预期错误: {e}", exc_info=True)
+#                 yield f"错误: {str(e)}"
+#                 break
+
+#             # If loop finishes due to retries exceeded for handled exceptions
+#             if retry_count > max_retries:
+#                 logger.error(f"Max retries reached for OpenAI API call.")
+#                 yield "An error occurred after multiple retries."  # Error already yielded in specific except blocks
+#                 break
+
+#     def _prepare_params(
+#         self,
+#         system_prompt: str,
+#         prompt: str,
+#         current_messages: Optional[list] = None,
+#         **kwargs,
+#     ) -> Dict[str, Any]:
+#         params = {
+#             "model": kwargs.get("model", self.model),
+#             "temperature": kwargs.get("temperature", self.temperature),
+#             # Use current_messages if provided, otherwise build from scratch
+#             "messages": (
+#                 current_messages
+#                 if current_messages is not None
+#                 else [
+#                     {"role": "system", "content": system_prompt},
+#                     {"role": "user", "content": prompt},
+#                 ]
+#             ),
+#         }
+
+#         # Handle tools parameter
+#         if "tools" in kwargs:
+#             params["tools"] = kwargs["tools"]
+#         if (
+#             "tool_choice" in kwargs
+#         ):  # e.g., "auto", "none", {"type": "function", "function": {"name": "my_function"}}
+#             params["tool_choice"] = kwargs["tool_choice"]
+
+#         if self.max_tokens is not None:
+#             params["max_tokens"] = kwargs.get("max_tokens", self.max_tokens)
+
+#         for key, value in self.extra_params.items():
+#             if (
+#                 key not in params
+#             ):  # Prioritize kwargs passed directly to invoke_stream/prepare_params
+#                 params[key] = kwargs.get(key, value)
+
+#         # Kwargs can override anything if not already set by specific logic
+#         for key, value in kwargs.items():
+#             if key not in params and key not in [
+#                 "system_prompt",
+#                 "prompt",
+#                 "current_messages",
+#                 "tools",
+#                 "tool_choice",
+#                 "model",
+#                 "temperature",
+#                 "max_tokens",
+#             ]:
+#                 params[key] = value
+
+#         # The system_prompt arg to _prepare_params is mostly for the initial message list creation.
+#         # If current_messages is passed, it's assumed to be complete.
+#         # Original logic for inserting system prompt from kwargs is removed to avoid duplication,
+#         # as initial message construction now handles the primary system_prompt argument.
+#         # If a system prompt needs to be dynamically re-added or changed mid-conversation,
+#         # it should be managed within the `current_messages` list *before* calling `_prepare_params`.
+
+#         return params
