@@ -14,6 +14,8 @@ from openai.types.chat.chat_completion_message_tool_call import (
 )
 
 from core.llm.base import LLMClient
+from core.context_manager import ContextManager
+from core.llm_base import ToolCall, ToolResult
 
 
 logger = logging.getLogger(__name__)
@@ -68,6 +70,7 @@ class OpenAIClient(LLMClient):
             messages: 可选的，预设的消息列表。如果提供，则忽略 system_prompt 和 user_input 来构建初始消息。
             run_tool_func: 可选的异步函数，用于执行工具调用。签名应为: async def run_tool(tool_name: str, tool_args: str) -> Any
             **kwargs: 覆盖默认参数或传递额外参数 (如 tools, tool_choice)
+                - ctx_manager: 上下文管理器，用于输出助手消息
 
         Yields:
             响应片段 (str)
@@ -90,6 +93,7 @@ class OpenAIClient(LLMClient):
             **kwargs,  # 包含 tools, tool_choice 等
         )
         api_params["stream"] = True
+        ctx_manager: ContextManager = kwargs.get("ctx_manager")
 
         max_retries = 3
         retry_count = 0
@@ -126,7 +130,13 @@ class OpenAIClient(LLMClient):
                         for tc_chunk in tc_chunk_list:
                             logger.debug(f"PROCESS TOOL CALL CHUNK, {tc_chunk}")
                             if len(tool_calls) <= tc_chunk.index:
-                                tool_calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                                tool_calls.append(
+                                    {
+                                        "id": "",
+                                        "type": "function",
+                                        "function": {"name": "", "arguments": ""},
+                                    }
+                                )
                             tc = tool_calls[tc_chunk.index]
 
                             if tc_chunk.id:
@@ -134,7 +144,9 @@ class OpenAIClient(LLMClient):
                             if tc_chunk.function.name:
                                 tc["function"]["name"] += tc_chunk.function.name
                             if tc_chunk.function.arguments:
-                                tc["function"]["arguments"] += tc_chunk.function.arguments
+                                tc["function"][
+                                    "arguments"
+                                ] += tc_chunk.function.arguments
 
                     # 3. 当LLM指示工具调用完成时 (或者流自然结束)
                     if finish_reason == "tool_calls":
@@ -154,20 +166,24 @@ class OpenAIClient(LLMClient):
                         # streamed_content = "".join(current_assistant_content_parts)
                         # current_assistant_content_parts.clear() # 清空，为下一轮准备 (如果递归)
 
-                        logger.info(
-                            f"llm finsih with tool_calls, {tool_calls}"
-                        )
+                        logger.info(f"llm finsih with tool_calls, {tool_calls}")
 
-                        assistant_tool_calls_list: List[ChatCompletionMessageToolCall] = []
+                        assistant_tool_calls_list: List[
+                            ChatCompletionMessageToolCall
+                        ] = []
                         tools_to_execute_details = []  # 用于实际执行
 
                         for tool_call in tool_calls:
-                            tc_id = tool_call['id']
-                            function_name = tool_call['function']['name']
-                            args_json = tool_call['function']['arguments']
+                            tc_id = tool_call["id"]
+                            function_name = tool_call["function"]["name"]
+                            args_json = tool_call["function"]["arguments"]
                             function_args = json.loads(args_json)
-                            logger.info(f"parse toolcall, {tc_id}, {function_name}, {args_json}, {function_args}")
-                            if function_name and tc_id:  # 参数可能是空字符串，但名称和ID必须有
+                            logger.info(
+                                f"parse toolcall, {tc_id}, {function_name}, {args_json}, {function_args}"
+                            )
+                            if (
+                                function_name and tc_id
+                            ):  # 参数可能是空字符串，但名称和ID必须有
                                 assistant_tool_calls_list.append(
                                     ChatCompletionMessageToolCall(
                                         id=tc_id,
@@ -178,7 +194,13 @@ class OpenAIClient(LLMClient):
                                         },
                                     )
                                 )
-                                tools_to_execute_details.append({"id": tc_id, "name": function_name, "arguments": function_args})
+                                tools_to_execute_details.append(
+                                    {
+                                        "id": tc_id,
+                                        "name": function_name,
+                                        "arguments": function_args,
+                                    }
+                                )
                             else:
                                 logger.warning(
                                     f"收集到的工具调用数据不完整，ID {tc_id}: {tool_call}"
@@ -215,6 +237,15 @@ class OpenAIClient(LLMClient):
                                 ],
                             }
                         )
+                        if ctx_manager:
+                            for tc in assistant_tool_calls_list:
+                                await ctx_manager.emit_and_append_to_history(
+                                    ToolCall(
+                                        tool_call_id=tc.id,
+                                        tool_name=tc.function.name,
+                                        tool_input=tc.function.arguments,
+                                    )
+                                )
 
                         # 3.2 执行工具
                         tool_results_messages: List[Dict[str, Any]] = []
@@ -284,6 +315,15 @@ class OpenAIClient(LLMClient):
                                 )
 
                         current_messages.extend(tool_results_messages)
+                        if ctx_manager:
+                            for tool_result in tool_results_messages:
+                                await ctx_manager.emit_and_append_to_history(
+                                    ToolResult(
+                                        tool_call_id=tool_result["tool_call_id"],
+                                        tool_name=tool_result["name"],
+                                        tool_output=tool_result["content"],
+                                    )
+                                )
 
                         # 3.3 带着工具结果递归调用，继续获取LLM响应
                         # 清空 active_tool_calls_data 为下一轮 LLM 响应做准备 (虽然在递归调用中会是新的实例)

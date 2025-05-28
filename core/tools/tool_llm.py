@@ -78,12 +78,17 @@ class LLMCallTool(Tool):
             messages=[],
             run_tool_func=ToolCenter.run_tool,
             tools=tool_defs,
+            ctx_manager=kwargs.get("ctx_manager"),
         ):
             yield chunk
 
     async def _render_prompt(
         self, system_prompt: str, prompt: str, prompt_detail: str, **kwargs
     ) -> str:
+        # 确保system_prompt不为None
+        if system_prompt is None:
+            system_prompt = ""
+            
         if not (prompt or prompt_detail):
             return system_prompt
 

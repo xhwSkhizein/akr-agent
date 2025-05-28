@@ -1,9 +1,9 @@
-name: 回复力量训练相关
+name: 默认回复
 depend_ctx_key:
   - intent_analyze_result
-match_condition: "'力量训练' in ctx.get('intent_analyze_result.intent')"
+match_condition: "ctx.get('intent_analyze_result') is not None"
 prompt: |
-  请针对力量训练给出专业的训练计划。用户的诉求是：{{ intent_analyze_result.intent }}，用户潜在需求是：{{ intent_analyze_result.potential_need }} ， 用户画像特征是：{{ intent_analyze_result.feature }}
+  经过分析，用户意图是：{{ intent_analyze_result.intent }}，用户潜在需求是：{{ intent_analyze_result.potential_need }} ， 用户画像特征有：{{ intent_analyze_result.feature }}
 
 prompt_detail:
 

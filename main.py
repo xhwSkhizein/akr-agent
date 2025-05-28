@@ -50,9 +50,9 @@ async def main():
     # global_ctx = GlobalContext()
 
     # 创建 Agent 实例
-    agent = Agent(config_dir="prompts/CoachLi/v1")
+    agent = Agent(config_dir="prompts/CoachLi/v1", sid="test")
 
-    user_input_2 = "我刚刚摔断了腿，应该怎么进行康复训练？"
+    user_input_2 = "最近肩膀有点疼，应该怎么做？"
     logger.info(f"\n--- 用户输入 ---\n{user_input_2}")
 
     async for chunk in agent.run_dynamic(user_input_2):
@@ -61,7 +61,7 @@ async def main():
 
     logger.info("\n--- 所有上下文 ---\n")
     logger.info(
-        json.dumps(agent._observable_ctx.to_dict(), indent=2, ensure_ascii=False)
+        json.dumps(agent._context_manager.get_context().to_dict(), indent=2, ensure_ascii=False)
     )
 
 

@@ -1,5 +1,13 @@
 from typing import Any, Dict
-import json
+from pathlib import Path
+
+
+def get_workspace_root(sid: str) -> Path:
+    return Path(f"./akr-agent/{sid}")
+
+
+def get_container_workspace(sid: str) -> Path:
+    return Path(f"./akr-agent/{sid}/container")
 
 
 def get_nested(data: Dict, keys: str, default: Any = None) -> Any:
@@ -62,24 +70,3 @@ def set_nested(data: Dict, keys: str, value: Any) -> None:
         current = current[key]
 
     current[key_list[-1]] = value
-
-
-class Context:
-    def __init__(self):
-        self._storage: Dict[str, Any] = {}
-
-    def set(self, key: str, value: Any):
-        try:
-            value = json.loads(value, strict=False)
-        except:
-            pass
-        set_nested(self._storage, key, value)
-
-    def get(self, key: str) -> Any:
-        return get_nested(self._storage, key)
-
-    def has(self, key: str) -> bool:
-        return get_nested(self._storage, key) is not None
-
-    def to_dict(self) -> Dict[str, Any]:
-        return dict(self._storage)

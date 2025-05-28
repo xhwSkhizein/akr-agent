@@ -1,6 +1,8 @@
 import enum
 from typing import Optional
-
+from dataclasses import dataclass
+from dataclasses_json import DataClassJsonMixin
+from core.rule_config import RuleConfig
 
 class TaskState(enum.Enum):
     """
@@ -17,6 +19,19 @@ class TaskState(enum.Enum):
     EXECUTING = "executing" # 正在执行
     COMPLETED = "completed" # 已完成
     FAILED = "failed"       # 执行失败
+
+@dataclass
+class TaskInfo(DataClassJsonMixin):
+    task_id: str
+    rule_id: str
+    rule_config: RuleConfig
+    state: TaskState
+    success: bool
+    error: Optional[str]
+    execution_time: Optional[float]
+    response_full: Optional[str]
+    created_at: float
+    updated_at: float
 
 
 class TaskStateTransitionError(Exception):

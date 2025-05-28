@@ -7,37 +7,51 @@ Agent 核心类
 
 import logging
 from typing import AsyncGenerator
-from core.output_stream import OutputChunk
-from core.prompt_engine import AgentConfigEngine
-from core.dispatcher import RuleDispatcher
-from core.event_bus import EventBus
-from core.observable_ctx import ObservableCtx
 
-logger = logging.getLogger(__name__)
+from core.prompt_engine import AgentConfigEngine
+
+from core.rule_config import AgentConfig
+from core.utils import get_workspace_root, get_container_workspace
+from core.context_manager import ContextManager
+from core.workspace_manager import WorkspaceManager
+from core.dispatcher import DynamicDispatcher
+from core.output_stream_manager import OutputChunk
+
 
 
 class Agent:
     """Agent 核心类"""
 
-    def __init__(self, config_dir: str):
+    def __init__(self, config_dir: str, sid: str):
         """
         初始化 Agent
 
         Args:
             config_dir: prompt 配置文件的基础路径
+            sid: 会话 ID
         """
+        # FIXME: logger use sid
+        self._logger = logging.getLogger(__name__)
+        
         if not config_dir or not config_dir.strip():
             raise ValueError("config_dir must be provided")
 
-        self._config = AgentConfigEngine.load(config_dir)
-        self._event_bus = EventBus()
-        self._observable_ctx = ObservableCtx(
-            event_bus=self._event_bus, system_prompt=self._config.system_prompt
+        self._logger.info(f"Agent init with config_dir: {config_dir}, sid: {sid}")
+        self._config: AgentConfig = AgentConfigEngine.load(config_dir)
+        self._workspace_manager = WorkspaceManager(
+            root=get_workspace_root(sid),
+            container_workspace=get_container_workspace(sid),
         )
-        self._rule_dispatcher = RuleDispatcher(
+        self._context_manager = ContextManager(logger=self._logger)
+        
+        self._context_manager.set_system_prompt(self._config.system_prompt)
+        self._dispatcher = DynamicDispatcher(
             initial_rules=self._config.rules,
-            event_bus=self._event_bus,
-            ctx=self._observable_ctx,
+            workspace_manager=self._workspace_manager,
+            context_manager=self._context_manager,
+            max_concurrent_tasks=self._config.max_concurrent_tasks,
+            timeout_detection_time=self._config.timeout_detection_time,
+            logger=self._logger,
         )
 
     async def run_dynamic(self, user_input: str) -> AsyncGenerator[OutputChunk, None]:
@@ -50,14 +64,13 @@ class Agent:
         Yields:
             str: 生成的回复片段
         """
-        logger.debug(f"Agent run_dynamic started with input: {user_input}")
+        self._logger.info(f"Agent run_dynamic started with input: {user_input}")
 
-        await self._observable_ctx.set("user_input", user_input)
-        await self._observable_ctx.append("dialogue.history", f"Q: {user_input}")
+        await self._dispatcher.add_user_input(user_input)
 
-        async for chunk in self._rule_dispatcher.get_output_stream():
+        async for chunk in self._dispatcher.get_output_stream():
             yield chunk
 
-        logger.debug("Agent run_dynamic finished.")
+        self._logger.info("Agent run_dynamic finished.")
         # TODO: Consider a shutdown for the dispatcher if the agent instance is not reused
-        # await self._rule_dispatcher.shutdown()
+        # await self._dispatcher.shutdown()

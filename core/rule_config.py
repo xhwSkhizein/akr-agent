@@ -29,7 +29,7 @@ def save_rule_config(source: str, rule_config: "RuleConfig"):
         f.write(rule_config.model_dump_json())
 
 
-def find_json_in_str(self, s: str) -> str:
+def find_json_in_str(s: str) -> str:
     # 从字符串中找到第一个 JSON 对象
     start = s.find("{")
     end = s.rfind("}")
@@ -94,7 +94,7 @@ class RuleConfig(BaseModel):
         except json.JSONDecodeError:
             # 尝试从文本中提取JSON
             try:
-                json_str = cls._find_json_in_str(tool_result_full)
+                json_str = find_json_in_str(tool_result_full)
                 if not json_str:
                     logger.error(f"无法从结果中提取JSON: {tool_result_full[:100]}...")
                     return []
@@ -129,3 +129,6 @@ class AgentConfig(BaseModel):
     meta: AgentMeta
     system_prompt: str
     rules: List[RuleConfig]
+    max_concurrent_tasks: int = 1
+    timeout_detection_time: int = 60
+    
