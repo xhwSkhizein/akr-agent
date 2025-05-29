@@ -8,7 +8,7 @@ Agent 核心类
 import logging
 from typing import AsyncGenerator
 
-from core.prompt_engine import AgentConfigEngine
+from core.agent_config_engine import AgentConfigEngine
 
 from core.rule_config import AgentConfig
 from core.utils import get_workspace_root, get_container_workspace
