@@ -52,7 +52,7 @@ async def main():
     # 创建 Agent 实例
     agent = Agent(config_dir="prompts/CoachLi/v1", sid="test")
 
-    user_input_2 = "最近肩膀有点疼，应该怎么做？"
+    user_input_2 = "1+1=？"
     logger.info(f"\n--- 用户输入 ---\n{user_input_2}")
 
     async for chunk in agent.run_dynamic(user_input_2):

@@ -147,15 +147,16 @@ class DynamicDispatcher:
 
                 # 检查是否所有任务都已完成
                 active_tasks = self._task_manager.get_active_tasks()
-
+                active_task_count = len(active_tasks)
                 # 如果没有活动任务且没有输出，则结束
-                if not active_tasks and not has_output:
+                if not active_tasks and not has_output and active_task_count == 0:
                     self._logger.info("所有任务已完成且输出流已耗尽，结束输出流")
                     break
-
-                self._logger.info(f"等待输出流，当前活动任务数: {len(active_tasks)}")
-                # 短暂等待后再次检查
-                await asyncio.sleep(0.2)
+                self._logger.info(f"等待输出流，当前活动任务数: {active_task_count}")
+                if active_task_count > 0:
+                    await asyncio.sleep(0.2)
+                else:
+                    break
         finally:
             self._logger.info("结束输出流")
 
