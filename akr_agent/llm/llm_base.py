@@ -1,3 +1,5 @@
+# Copy from https://github.com/Intelligent-Internet/ii-agent
+
 from dataclasses import dataclass
 from typing import Any
 from dataclasses_json import DataClassJsonMixin
@@ -83,15 +85,15 @@ class TextResult(DataClassJsonMixin):
     role: Literal["assistant"] = "assistant"
 
 
-# agent内容块
+# agent content block
 AssistantContentBlock = TextResult | ToolCall | AIContext
 
-# 用户内容块
+# user content block
 UserContentBlock = TextPrompt | ToolFormattedResult
 
-# 通用内容块
+# general content block
 GeneralContentBlock = UserContentBlock | AssistantContentBlock
 
-# LLM 消息
+# LLM messages
 LLMMessages = list[list[GeneralContentBlock]]
 

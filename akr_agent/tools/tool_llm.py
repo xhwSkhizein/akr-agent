@@ -21,16 +21,16 @@ from .base import Tool, ToolCenter
 
 class LLMCallTool(Tool):
     """
-    LLM 调用工具
+    LLM Call Tool, used to call LLM
 
-    支持的参数:
-    - system_prompt: 系统提示
-    - prompt: 提示
-    - prompt_detail: 提示详情
-    - ctx: 上下文
-    - rule_config: 规则配置
-    - extra: 额外配置
-        - tools: 工具列表
+    Supported parameters:
+    - system_prompt: System prompt
+    - prompt: Prompt
+    - prompt_detail: Prompt detail
+    - ctx: Observable context
+    - rule_config: Rule config
+    - extra: Extra config
+        - tools: Tool list
     """
 
     def __init__(self, **kwargs):
@@ -51,14 +51,14 @@ class LLMCallTool(Tool):
         prompt_detail: str,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
-        """执行 LLM 调用
+        """Execute LLM call
 
         Args:
-            user_input: 用户输入, 调用 LLM 时用户输入的内容
-            system_prompt: 最主要的系统提示，定义了目标、需求、约束和预期输出
-            prompt: 提示补充，用于补充系统提示，针对关键点进行加强
-            prompt_detail: 对于关键点的详细说明、引导等，鼓励模型在得出结论前进行推理步骤、增加示例或规范输出格式等
-            **kwargs: 其他参数
+            user_input: User input, the content of user input when calling LLM
+            system_prompt: The most important system prompt, defining the goal, requirements, constraints, and expected output
+            prompt: Prompt, used to supplement system prompt, strengthening key points
+            prompt_detail: Detailed explanation, guidance, etc. for key points, encouraging the model to perform inference steps, add examples, or standardize output format before reaching a conclusion
+            **kwargs: Other parameters
         """
         system_prompt = await self._render_prompt(
             system_prompt=system_prompt,
@@ -84,10 +84,10 @@ class LLMCallTool(Tool):
     async def _render_prompt(
         self, system_prompt: str, prompt: str, prompt_detail: str, **kwargs
     ) -> str:
-        # 确保system_prompt不为None
+        # Ensure system_prompt is not None
         if system_prompt is None:
             system_prompt = ""
-            
+
         if not (prompt or prompt_detail):
             return system_prompt
 
@@ -111,9 +111,9 @@ class LLMCallTool(Tool):
             template = jinja_env.from_string(system_prompt)
             system_prompt = template.render(**custom_render_ctx)
         except TemplateError as e:
-            logger.error(f"模板渲染错误: {e}", exc_info=True)
-            # 降级策略：返回未渲染的提示
-            system_prompt = system_prompt + "\n\n[注意: 模板渲染失败]"
+            logger.error(f"Template rendering error: {e}", exc_info=True)
+            # Downgrade strategy: return unrendered prompt
+            system_prompt = system_prompt + "\n\n[Note: Template rendering failed]"
         except Exception as e:
             logger.error(
                 f"Error rendering prompt template for rule: {rule_config.name}: {e}"
@@ -131,8 +131,8 @@ class LLMCallTool(Tool):
             tool_def = ToolCenter.get_definition(name=tool_name)
             if tool_def:
                 tool_defs.append({"type": "function", "function": tool_def})
-                logger.debug(f"根据 extra 配置，获取到可使用的工具: {tool_name} {tool_defs}")
+                logger.debug(f"Use tool: {tool_name} {tool_defs}")
             else:
-                logger.warning(f"根据 extra 配置，无法获取到对应的 tools={tool_name}, def={tool_def}")
+                logger.warning(f"Cannot get tool: {tool_name}, def={tool_def}")
 
         return tool_defs

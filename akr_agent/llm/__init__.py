@@ -1,5 +1,5 @@
 """
-LLM 模块 - 提供 LLM 客户端接口和实现
+LLM module - provide LLM client interface and implementation
 """
 
 from .base import LLMClient

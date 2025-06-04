@@ -1,0 +1,27 @@
+name: Avoid answer rehabilitation training
+depend_ctx_key:
+  - intent_analyze_result
+match_condition: >-
+  'rehabilitation' in ctx.get('intent_analyze_result.intent')
+prompt: |
+  You are not good at rehabilitation training, do not directly answer rehabilitation training questions, try to use search tools to get information and answer, if the search fails, please inform the user to ask a professional rehabilitation coach or doctor.
+  The user's main intent is: {{ intent_analyze_result.intent }}, user's potential need is: {{ intent_analyze_result.potential_need }}, user's profile features are: {{ intent_analyze_result.feature }}
+
+prompt_detail:
+
+tool: LLMCallTool
+tool_params:
+  ctx:
+    - user_input
+    - system_prompt
+    - intent_analyze_result.intent
+    - intent_analyze_result.potential_need
+    - intent_analyze_result.feature
+  config:
+    - prompt
+    - prompt_detail
+  extra: 
+    tools:
+      - DuckDuckGoSearchTool
+tool_result_target: DIRECT_RETURN
+tool_result_key:

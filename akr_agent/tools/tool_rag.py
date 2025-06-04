@@ -3,7 +3,7 @@ from .base import Tool
 
 class RAGTool(Tool):
     """
-    RAG 检索工具, 用于从向量数据库中检索相关文档
+    RAG retrieval tool, used to retrieve relevant documents from vector database
     """
 
     def __init__(self, **kwargs):

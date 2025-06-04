@@ -13,7 +13,7 @@ from .task_state import TaskInfo
 
 
 class MaxRetryError(Exception):
-    """工具调用达到最大重试次数"""
+    """Tool call reached maximum retry count"""
 
     error_msg: str
 
@@ -23,7 +23,7 @@ class MaxRetryError(Exception):
 
 
 class TaskExecutor:
-    """任务执行器，负责执行任务并处理结果"""
+    """Task executor, responsible for executing tasks and handling results"""
 
     def __init__(
         self,
@@ -38,26 +38,26 @@ class TaskExecutor:
         self._executing_tasks: Dict[str, asyncio.Task] = {}
 
     async def _prepare_tool_params(self, task_info: TaskInfo) -> Dict[str, Any]:
-        """准备工具调用参数"""
+        """Prepare tool call parameters"""
         rule_config: RuleConfig = task_info.rule_config
 
         tool_params = {}
 
-        # 从上下文获取参数
+        # Get parameters from context
         ctx_keys = rule_config.tool_params.get("ctx", [])
         for key in ctx_keys:
             tool_params[key] = self._context_manager.get_context().get(key)
 
-        # 从规则配置获取参数
+        # Get parameters from rule config
         config_keys = rule_config.tool_params.get("config", [])
         for key in config_keys:
             tool_params[key] = getattr(rule_config, key)
 
-        # 添加额外参数
+        # Add extra parameters
         extra_params = rule_config.tool_params.get("extra", {})
         tool_params.update(extra_params)
 
-        # 添加上下文和规则配置
+        # Add context and rule config
         tool_params["ctx"] = self._context_manager.get_context()
         tool_params["ctx_manager"] = self._context_manager
         tool_params["rule_config"] = rule_config
@@ -67,17 +67,17 @@ class TaskExecutor:
     async def _handle_tool_result(
         self, task_info: TaskInfo, response_full: str
     ) -> None:
-        """处理工具调用结果"""
+        """Handle tool call result"""
         rule_config: RuleConfig = task_info.rule_config
 
         if rule_config.tool_result_target == "DIRECT_RETURN":
-            # 保存到对话历史
+            # Save to conversation history
             await self._context_manager.emit_and_append_to_history(
                 TextResult(text=response_full)
             )
 
         elif rule_config.tool_result_target == "AS_CONTEXT":
-            # 保存到上下文
+            # Save to context
             self._context_manager.get_context().set(
                 rule_config.tool_result_key, response_full
             )
@@ -86,7 +86,7 @@ class TaskExecutor:
             )
 
         elif rule_config.tool_result_target == "NEW_RULES":
-            # 解析并生成新规则
+            # Parse and generate new rules
             new_rule_configs = RuleConfig.parse_and_gen(
                 source=rule_config.name,
                 tool_result_full=response_full,
@@ -102,7 +102,7 @@ class TaskExecutor:
                 )
 
     async def _execute_task(self, task_info: TaskInfo) -> AsyncGenerator[str, None]:
-        """执行任务的内部实现"""
+        """Internal implementation of task execution"""
         start_time = time.time()
         task_id = task_info.task_id
         rule_config: RuleConfig = task_info.rule_config
@@ -110,7 +110,7 @@ class TaskExecutor:
         error_msg = None
 
         async def emit_error(msg: str, error_type: str = "failed") -> None:
-            """辅助函数：发送错误信息并更新状态"""
+            """Helper function: send error message and update status"""
             nonlocal error_msg
             error_msg = msg
             yield msg
@@ -122,7 +122,7 @@ class TaskExecutor:
                 self._context_manager.emit_task_failed(task_info, execution_time, msg)
 
         try:
-            # 1. 准备工具调用参数
+            # 1. Prepare tool call parameters
             try:
                 tool_params = await self._prepare_tool_params(task_info)
                 self._logger.info(
@@ -138,7 +138,7 @@ class TaskExecutor:
                     yield chunk
                 return
 
-            # 2. 执行工具调用
+            # 2. Execute tool call
             self._context_manager.emit_task_executing(task_info)
             try:
                 async for chunk in ToolCenter.run_tool(
@@ -153,7 +153,7 @@ class TaskExecutor:
                     "Tool execution was cancelled", "cancelled"
                 ):
                     yield chunk
-                raise  # 重新抛出取消异常
+                raise  # Re-raise cancellation error
             except Exception as e:
                 self._logger.error(
                     f"Task {task_id}: Tool {rule_config.tool} execution failed: {e}"
@@ -164,7 +164,7 @@ class TaskExecutor:
                     yield chunk
                 return
 
-            # 3. 处理工具调用结果
+            # 3. Handle tool call result
             if not response_full:
                 self._logger.error(
                     f"Error: Tool {rule_config.tool}, task {task_id} returned empty result"
@@ -197,7 +197,7 @@ class TaskExecutor:
                     yield chunk
                 return
 
-            # 任务成功完成
+            # Task completed successfully
             execution_time = time.time() - start_time
             self._logger.info(
                 f"Task {task_id} completed successfully in {execution_time:.2f}s"
@@ -210,7 +210,7 @@ class TaskExecutor:
             self._logger.warning(f"Task {task_id} was cancelled")
             async for chunk in emit_error(f"Task {task_id} was cancelled", "cancelled"):
                 yield chunk
-            raise  # 重新抛出取消异常
+            raise  # Re-raise cancellation error
 
         except Exception as e:
             self._logger.error(
@@ -222,50 +222,51 @@ class TaskExecutor:
                 yield chunk
 
     async def run_task(self, task_info: TaskInfo) -> AsyncGenerator[str, None]:
-        """运行任务并支持取消
+        """Run task and support cancellation
 
-        这个方法创建一个异步任务并将其存储在 _executing_tasks 字典中，以便可以取消任务
+        This method creates an async task and stores it in the _executing_tasks dictionary
+        to allow cancellation of the task.
         """
         task_id = task_info.task_id
 
-        # 创建一个内部函数，用于包装 execute_task 并在完成后清理任务
+        # Create an internal function to wrap execute_task and clean up the task on completion
         async def _task_wrapper():
             try:
                 async for chunk in self._execute_task(task_info):
                     yield chunk
             finally:
-                # 任务完成后从字典中移除
+                # Remove task from dictionary on completion
                 if task_id in self._executing_tasks:
                     del self._executing_tasks[task_id]
 
-        # 创建异步生成器
+        # Create async generator
         gen = _task_wrapper().__aiter__()
 
-        # 创建一个任务来运行生成器
+        # Create a task to run the generator
         task = asyncio.create_task(gen.__anext__())
         self._executing_tasks[task_id] = task
 
-        # 返回生成器的结果
+        # Return generator results
         try:
             while True:
                 try:
-                    # 等待当前块
+                    # Wait for current chunk
                     result = await task
                     yield result
 
-                    # 创建下一个块的任务
+                    # Create next chunk task
                     task = asyncio.create_task(gen.__anext__())
                     self._executing_tasks[task_id] = task
                 except StopAsyncIteration:
-                    # 生成器已完成
+                    # Generator completed
                     break
         finally:
-            # 确保任务从字典中移除
+            # Ensure task is removed from dictionary
             if task_id in self._executing_tasks:
                 del self._executing_tasks[task_id]
 
     async def cancel_task(self, task_id: str) -> None:
-        """取消任务"""
+        """Cancel task"""
         self._logger.info(f"Cancelling task {task_id}")
         if task_id in self._executing_tasks:
             task = self._executing_tasks[task_id]
@@ -274,4 +275,4 @@ class TaskExecutor:
                 await task
             except asyncio.CancelledError:
                 pass
-            # 任务会在 run_task 的 finally 块中从字典中移除
+            # The task will be removed from the dictionary in the finally block of run_task

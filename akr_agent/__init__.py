@@ -1,5 +1,5 @@
 """
-AKR-Agent - 一个灵活的基于规则的 AI Agent 框架
+AKR-Agent - A flexible rule-based AI Agent framework
 """
 
 try:
