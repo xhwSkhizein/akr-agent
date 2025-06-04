@@ -20,7 +20,7 @@ class Crawl4AITool(Tool):
 
     async def run(self, url: str, **kwargs) -> str:
         """
-        Run crawl for a url and return results.
+        Run crawl for a url and return markdown text.
 
         Args:
             url: The url to crawl.
