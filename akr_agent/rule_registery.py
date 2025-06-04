@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 class RuleRegistry:
     """
-    规则注册表，负责规则的注册、索引和查询
+    Rule registry, responsible for rule registration, indexing and query
     """
     
     def __init__(self):
@@ -21,19 +21,19 @@ class RuleRegistry:
         self._rule_priorities: Dict[str, int] = {}  # rule_id -> priority
     
     def generate_rule_id(self, rule_name: str) -> str:
-        """生成唯一的规则ID"""
+        """Generate unique rule ID"""
         return f"{rule_name}_{str(uuid.uuid4())[:8]}"
     
     def register_rule(self, rule_config: RuleConfig) -> str:
-        """注册新规则"""
+        """Register new rule"""
         rule_id = self.generate_rule_id(rule_config.name)
         self._rules[rule_id] = rule_config
         
-        # 设置优先级
+        # Set priority
         priority = getattr(rule_config, "priority", 0)
         self._rule_priorities[rule_id] = priority
         
-        # 添加到索引
+        # Add to index
         for key in rule_config.depend_ctx_key:
             self._key_to_rules[key].add(rule_id)
         
@@ -46,18 +46,18 @@ class RuleRegistry:
         return rule_id
     
     def unregister_rule(self, rule_id: str) -> None:
-        """注销规则"""
+        """Unregister rule"""
         if rule_id not in self._rules:
             return
             
         rule_config = self._rules[rule_id]
         
-        # 从索引中移除
+        # Remove from index
         for key in rule_config.depend_ctx_key:
             if rule_id in self._key_to_rules[key]:
                 self._key_to_rules[key].remove(rule_id)
         
-        # 移除规则配置和优先级
+        # Remove rule config and priority
         del self._rules[rule_id]
         if rule_id in self._rule_priorities:
             del self._rule_priorities[rule_id]
@@ -65,19 +65,19 @@ class RuleRegistry:
         logger.debug(f"Unregistered rule: {rule_id}")
     
     def get_rule(self, rule_id: str) -> Optional[RuleConfig]:
-        """获取规则配置"""
+        """Get rule config"""
         return self._rules.get(rule_id)
     
     def get_rules_for_key(self, key: str) -> Set[str]:
-        """获取依赖指定键的所有规则ID"""
+        """Get all rule IDs that depend on the specified key"""
         return self._key_to_rules.get(key, set())
     
     def get_rule_priority(self, rule_id: str) -> int:
-        """获取规则优先级"""
+        """Get rule priority"""
         return self._rule_priorities.get(rule_id, 0)
     
     def check_rule_condition(self, rule_id: str, ctx: ObservableCtx) -> bool:
-        """检查规则条件是否满足"""
+        """Check if the rule condition is satisfied"""
         rule_config = self.get_rule(rule_id)
         if not rule_config:
             return False
@@ -87,7 +87,7 @@ class RuleRegistry:
             return True
             
         try:
-            # 准备安全的执行环境
+            # Prepare safe execution environment
             eval_globals = {
                 "__builtins__": {
                     "True": True,

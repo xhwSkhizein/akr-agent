@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "akr-agent"
-description = "Akr Agent - 一个灵活的基于规则的 AI Agent 框架"
+description = "Akr Agent - A flexible rule-based AI Agent framework"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}

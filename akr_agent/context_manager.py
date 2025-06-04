@@ -18,8 +18,8 @@ from .rule_config import RuleConfig
 class ContextManager:
 
     def __init__(self, logger: logging.Logger):
-        self._event_bus = EventBus(logger=logger)  # 事件总线
-        self._ctx = ObservableCtx(self._event_bus, logger)  # 支持 nested key 的 dict
+        self._event_bus = EventBus(logger=logger) 
+        self._ctx = ObservableCtx(self._event_bus, logger) 
         self._message_history = asyncio.PriorityQueue()
         self._logger = logger
 
@@ -32,19 +32,19 @@ class ContextManager:
     def subscribe(
         self, event_type: EventType, callback: Callable[[RealTimeEvent], None]
     ):
-        self._logger.info(f"订阅事件 {event_type}， 回调函数 {callback.__name__}")
+        self._logger.info(f"Subscribe to event {event_type}, callback {callback.__name__}")
         self._event_bus.subscribe(event_type, callback)
 
     def set_system_prompt(self, system_prompt: str):
         self._ctx.set("system_prompt", system_prompt)
 
     def emit_event(self, event: RealTimeEvent):
-        self._logger.info(f"收到事件 {event.type}， 数据 {event.model_dump()}")
+        self._logger.info(f"Emit event {event.type}, data {event.model_dump()}")
         self._event_bus.emit(event)
 
     async def emit_and_append_to_history(self, message: GeneralContentBlock):
         """
-        发送事件并添加到消息历史
+        Send event and add to message history
         """
         await self._message_history.put((time.time(), message))
         self._ctx.append("dialogue.history", message.to_dict())

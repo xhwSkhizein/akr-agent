@@ -1,5 +1,5 @@
 """
-Akr - 一个基于配置的单 Agent 框架
+Akr - A flexible rule-based AI Agent framework
 """
 
 __version__ = "0.1.0"

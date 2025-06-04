@@ -3,7 +3,7 @@ from .base import Tool
 
 class CodeReplTool(Tool):
     """
-    代码解释器工具, 用于执行代码并返回结果
+    Code Repl Tool, used to execute code and return result
     """
 
     def __init__(self, **kwargs):

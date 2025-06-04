@@ -13,6 +13,9 @@ from .rule_config import RuleConfig
 
 
 class DynamicDispatcher:
+    """
+    Dynamic dispatcher for task management and rule execution
+    """
 
     def __init__(
         self,
@@ -40,12 +43,12 @@ class DynamicDispatcher:
             max_concurrent_tasks=max_concurrent_tasks,
             timeout_detection_time=timeout_detection_time,
         )
-        # 初始化规则
+        # Initialize rules
         if initial_rules:
             for rule_config in initial_rules:
                 self.add_rule(rule_config)
 
-        # 订阅上下文变化事件
+        # Subscribe to context changes
         self._context_manager.subscribe(
             EventType.CONTEXT_CHANGED, self._handle_ctx_changed
         )
@@ -59,7 +62,7 @@ class DynamicDispatcher:
 
     async def _handle_ctx_changed(self, event: RealTimeEvent) -> None:
         """
-        处理上下文变化事件
+        Handle context changes
         """
         changed_key = event.data["key"]
         new_value = event.data["value"]
@@ -67,12 +70,12 @@ class DynamicDispatcher:
         self._logger.info(
             f"Context changed: key='{changed_key}', value='{new_value}', old_value='{old_value}'"
         )
-        # 获取依赖此键的所有规则
+        # Get all rules depending on this key
         dependent_rules = self._rule_registry.get_rules_for_key(changed_key)
         self._logger.info(
             f"Found {len(dependent_rules)} rules depending on key '{changed_key}'"
         )
-        # 检查每个规则并创建任务
+        # Check each rule and create task
         for rule_id in dependent_rules:
             await self._check_and_create_task(rule_id)
 
@@ -92,17 +95,17 @@ class DynamicDispatcher:
         await self._context_manager.emit_and_append_to_history(text_prompt)
 
     def add_rule(self, rule_config: RuleConfig, immediate: bool = False) -> str:
-        """添加新规则"""
+        """Add new rule"""
         rule_id = self._rule_registry.register_rule(rule_config)
-        # 如果需要立即检查，则检查条件并在满足时创建任务
+        # If immediate check is needed, check conditions and create tasks if satisfied
         if immediate:
             asyncio.create_task(self._check_and_create_task(rule_id))
 
         return rule_id
 
     async def _check_and_create_task(self, rule_id: str) -> None:
-        """检查规则条件，如果满足则创建任务"""
-        # 检查是否有该规则的任务正在执行
+        """Check rule conditions and create tasks if satisfied"""
+        # Check if there are any active tasks for this rule
         rule_tasks = self._task_manager.get_tasks_by_rule(rule_id)
         active_tasks = [
             task_id
@@ -116,7 +119,7 @@ class DynamicDispatcher:
             )
             return
 
-        # 检查规则条件
+        # Check rule conditions
         if not self._rule_registry.check_rule_condition(
             rule_id, self._context_manager.get_context()
         ):
@@ -125,7 +128,7 @@ class DynamicDispatcher:
             )
             return
 
-        # 条件满足，创建新任务
+        # Condition satisfied, create new task
         rule_config = self._rule_registry.get_rule(rule_id)
         task_id = await self._task_manager.create_task_and_schedule(
             rule_id, rule_config
@@ -135,34 +138,34 @@ class DynamicDispatcher:
         )
 
     async def get_output_stream(self) -> AsyncGenerator[OutputChunk, None]:
-        """提供最终输出的异步生成器"""
+        """Provide final output as an async generator"""
         try:
-            # 持续检查是否有任务正在执行或等待调度
+            # Continuously check if there are any active tasks or pending tasks
             while True:
-                # 检查是否有输出可用
+                # Check if there is any output available
                 has_output = False
                 async for chunk in self._output_manager.get_output_stream():
                     has_output = True
                     yield chunk
 
-                # 检查是否所有任务都已完成
+                # Check if all tasks are completed
                 active_tasks = self._task_manager.get_active_tasks()
                 active_task_count = len(active_tasks)
-                # 如果没有活动任务且没有输出，则结束
+                # If there are no active tasks and no output, end the stream
                 if not active_tasks and not has_output and active_task_count == 0:
-                    self._logger.info("所有任务已完成且输出流已耗尽，结束输出流")
+                    self._logger.info("All tasks are completed and output stream is exhausted, ending output stream")
                     break
-                self._logger.info(f"等待输出流，当前活动任务数: {active_task_count}")
+                self._logger.info(f"Waiting for output stream, current active task count: {active_task_count}")
                 if active_task_count > 0:
                     await asyncio.sleep(0.2)
                 else:
                     break
         finally:
-            self._logger.info("结束输出流")
+            self._logger.info("Output stream ended")
 
     async def shutdown(self) -> None:
-        """关闭调度器并清理资源"""
+        """Shutdown dispatcher and clean up resources"""
         self._logger.info("Shutting down Dispatcher...")
-        # 关闭任务管理器
+        # Close task manager
         await self._task_manager.shutdown()
         self._logger.info("Dispatcher shutdown complete")

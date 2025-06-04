@@ -1,9 +1,9 @@
-name: 默认回复
+name: Default QA
 depend_ctx_key:
   - intent_analyze_result
 match_condition: "ctx.get('intent_analyze_result') is not None"
 prompt: |
-  经过分析，用户意图是：{{ intent_analyze_result.intent }}，用户潜在需求是：{{ intent_analyze_result.potential_need }} ， 用户画像特征有：{{ intent_analyze_result.feature }}
+  After analysis, the user's main intent is: {{ intent_analyze_result.intent }}，user's potential need is: {{ intent_analyze_result.potential_need }}，user's profile features are: {{ intent_analyze_result.feature }}
 
 prompt_detail:
 

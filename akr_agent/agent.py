@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-Agent 核心类
+Agent core class
 """
 
 import logging
@@ -20,15 +20,15 @@ from .output_stream_manager import OutputChunk
 
 
 class Agent:
-    """Agent 核心类"""
+    """Agent core class"""
 
     def __init__(self, config_dir: str, sid: str):
         """
-        初始化 Agent
+        Initialize Agent
 
         Args:
-            config_dir: prompt 配置文件的基础路径
-            sid: 会话 ID
+            config_dir: Base path of prompt configuration files
+            sid: Session ID
         """
         # FIXME: logger use sid
         self._logger = logging.getLogger(__name__)
@@ -56,13 +56,13 @@ class Agent:
 
     async def run_dynamic(self, user_input: str) -> AsyncGenerator[OutputChunk, None]:
         """
-        运行 Agent 的动态对话流程
+        Run Agent's dynamic conversation flow
 
         Args:
-            user_input: 用户输入
+            user_input: User input
 
         Yields:
-            str: 生成的回复片段
+            str: Generated response chunk
         """
         self._logger.info(f"Agent run_dynamic started with input: {user_input}")
 

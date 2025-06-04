@@ -1,5 +1,5 @@
 """
-OpenAI LLM 客户端实现
+OpenAI LLM client implementation
 """
 
 import logging
@@ -23,35 +23,35 @@ logger = logging.getLogger(__name__)
 
 class OpenAIClient(LLMClient):
     """
-    OpenAI API 客户端实现 (支持 tool_calls)
+    OpenAI API client implementation (support tool_calls)
     """
 
     def __init__(
         self,
         api_key: Optional[str] = None,
-        model: str = "gpt-4o-mini",  # 建议使用支持工具调用的较新模型
+        model: str = "gpt-4o-mini",  # suggest use new model support tool_calls
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
         **kwargs,
     ):
         """
-        初始化 OpenAI 客户端
+        Initialize OpenAI client
 
         Args:
-            api_key: OpenAI API 密钥，如果为 None 则使用环境变量
-            model: 模型名称
-            temperature: 温度参数
-            max_tokens: 最大令牌数
-            **kwargs: 其他 OpenAI API 参数 (例如 base_url, timeout 等)
+            api_key: OpenAI API key, if None then use environment variable
+            model: Model name
+            temperature: Temperature parameter
+            max_tokens: Maximum tokens
+            **kwargs: Other OpenAI API parameters (e.g. base_url, timeout, etc.)
         """
         self.client = AsyncOpenAI(
             api_key=api_key, **kwargs.pop("client_args", {})
-        )  # 传递 client 的额外参数
+        )  # pass additional parameters to client
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self.extra_params = kwargs  # 其他传递给 completions.create 的参数
-        logging.info(f"初始化 OpenAI 客户端，模型: {model}")
+        self.extra_params = kwargs  # other parameters passed to completions.create
+        logging.info(f"Initialize OpenAI client, model: {model}")
 
     async def invoke_stream(
         self,
@@ -62,35 +62,35 @@ class OpenAIClient(LLMClient):
         **kwargs,
     ) -> AsyncGenerator[str, None]:
         """
-        流式调用 OpenAI API 并返回响应流，支持工具调用。
+        Streamly invoke OpenAI API and return response stream, support tool_calls.
 
         Args:
-            system_prompt: 系统提示词 (仅在初次调用或 messages 为 None 时用于构建初始消息)
-            user_input: 用户输入 (仅在初次调用或 messages 为 None 时用于构建初始消息)
-            messages: 可选的，预设的消息列表。如果提供，则忽略 system_prompt 和 user_input 来构建初始消息。
-            run_tool_func: 可选的异步函数，用于执行工具调用。签名应为: async def run_tool(tool_name: str, tool_args: str) -> Any
-            **kwargs: 覆盖默认参数或传递额外参数 (如 tools, tool_choice)
-                - ctx_manager: 上下文管理器，用于输出助手消息
+            system_prompt: System prompt (only used to build initial messages on first call or when messages is None)
+            user_input: User input (only used to build initial messages on first call or when messages is None)
+            messages: Optional, preset messages list. If provided, system_prompt and user_input are ignored to build initial messages.
+            run_tool_func: Optional async function to execute tool calls. Signature should be: async def run_tool(tool_name: str, tool_args: str) -> Any
+            **kwargs: Override default parameters or pass additional parameters (e.g. tools, tool_choice)
+                - ctx_manager: Context manager, used to output assistant messages
 
         Yields:
-            响应片段 (str)
+            Response fragment (str)
         """
         current_messages: List[Dict[str, Any]]
         if messages is not None:
-            current_messages = list(messages)  # 使用提供的消息列表副本
+            current_messages = list(messages)  # use provided message list copy
         else:
             current_messages = [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_input},
             ]
 
-        # 准备 API 调用参数
-        # 注意：kwargs 传递给 _prepare_params，它会合并实例属性和这些运行时参数
+        # prepare API call parameters
+        # note: kwargs passed to _prepare_params, it will merge instance attributes and these runtime parameters
         api_params = self._prepare_params(
-            system_prompt=system_prompt,  # 传递以备 _prepare_params 可能的初始构建逻辑
-            prompt=user_input,  # 同上
-            current_messages=current_messages,  # 最重要：传递当前消息历史
-            **kwargs,  # 包含 tools, tool_choice 等
+            system_prompt=system_prompt,  # pass to _prepare_params for possible initial message building logic
+            prompt=user_input,  # same as above
+            current_messages=current_messages,  # most important: pass current message history
+            **kwargs,  # include tools, tool_choice, etc
         )
         api_params["stream"] = True
         if "ctx_manager" in kwargs:
@@ -105,16 +105,16 @@ class OpenAIClient(LLMClient):
 
         while retry_count <= max_retries:
             try:
-                logging.debug(f"OPENAI 请求参数: {api_params}")
+                logging.debug(f"OPENAI invoke stream params: {api_params}")
                 response_stream: AsyncGenerator[ChatCompletionChunk, None] = (
                     await self.client.chat.completions.create(**api_params)
                 )
 
-                # 用于累积当前LLM响应中的 tool_calls 数据
+                # used to accumulate tool_calls data in current LLM response
                 # key: tool_call_id, value: {"id": ..., "type": "function", "function_name": ..., "function_arguments": ...}
                 active_tool_calls_data: Dict[str, Dict[str, str]] = {}
                 tool_calls = []
-                # 用于累积本轮LLM回复的文本内容 (如果LLM在要求工具调用前有说话)
+                # used to accumulate text content in current LLM response (if LLM speaks before requesting tool calls)
                 # current_assistant_content_parts: List[str] = []
 
                 async for chunk in response_stream:
@@ -123,12 +123,12 @@ class OpenAIClient(LLMClient):
                     delta = chunk.choices[0].delta
                     finish_reason = chunk.choices[0].finish_reason
 
-                    # 1. 处理普通文本内容流
+                    # 1. process text content
                     if delta and delta.content:
                         # current_assistant_content_parts.append(delta.content)
                         yield delta.content
 
-                    # 2. 处理 tool_calls 块
+                    # 2. process tool_calls
                     if delta and delta.tool_calls:
                         tc_chunk_list = delta.tool_calls
                         for tc_chunk in tc_chunk_list:
@@ -152,30 +152,30 @@ class OpenAIClient(LLMClient):
                                     "arguments"
                                 ] += tc_chunk.function.arguments
 
-                    # 3. 当LLM指示工具调用完成时 (或者流自然结束)
+                    # 3. when LLM indicates tool calls are finished (or stream naturally ends)
                     if finish_reason == "tool_calls":
                         if len(tool_calls) == 0:
                             logger.warning(
-                                "finish_reason 是 'tool_calls' 但没有收集到工具调用数据。"
+                                "finish_reason is 'tool_calls' but no tool call data collected."
                             )
-                            # 这种情况不应该发生，但以防万一
+                            # This should not happen, but just in case
                             break
 
                         if not run_tool_func:
-                            yield "\n[错误: LLM请求工具调用，但未提供 'run_tool_func' 来执行它们。]\n"
-                            logger.error("LLM请求工具调用，但 'run_tool_func' 未提供。")
-                            return  # 结束生成
+                            yield "\n[Error: LLM requests tool calls, but 'run_tool_func' is not provided to execute them.]\n"
+                            logger.error("LLM requests tool calls, but 'run_tool_func' is not provided.")
+                            return  # end generation
 
-                        # 3.1 构建助手消息历史（包含工具调用请求）
+                        # 3.1 build assistant message history (include tool call requests)
                         # streamed_content = "".join(current_assistant_content_parts)
-                        # current_assistant_content_parts.clear() # 清空，为下一轮准备 (如果递归)
+                        # current_assistant_content_parts.clear() # clear for next round (if recursive)
 
                         logger.info(f"llm finsih with tool_calls, {tool_calls}")
 
                         assistant_tool_calls_list: List[
                             ChatCompletionMessageToolCall
                         ] = []
-                        tools_to_execute_details = []  # 用于实际执行
+                        tools_to_execute_details = []  # used to execute tools
 
                         for tool_call in tool_calls:
                             tc_id = tool_call["id"]
@@ -187,11 +187,11 @@ class OpenAIClient(LLMClient):
                             )
                             if (
                                 function_name and tc_id
-                            ):  # 参数可能是空字符串，但名称和ID必须有
+                            ):  # Parameters may be empty strings, but name and ID must be present
                                 assistant_tool_calls_list.append(
                                     ChatCompletionMessageToolCall(
                                         id=tc_id,
-                                        type="function",  # OpenAI 目前只支持 function 类型
+                                        type="function",  # OpenAI currently only supports function type
                                         function={
                                             "name": function_name,
                                             "arguments": args_json,
@@ -207,14 +207,14 @@ class OpenAIClient(LLMClient):
                                 )
                             else:
                                 logger.warning(
-                                    f"收集到的工具调用数据不完整，ID {tc_id}: {tool_call}"
+                                    f"collect tool call data incomplete, ID {tc_id}: {tool_call}"
                                 )
 
                         if not assistant_tool_calls_list:
                             logger.error(
-                                "finish_reason='tool_calls' 但没有有效的工具调用可执行。"
+                                "finish_reason='tool_calls' but no valid tool calls to execute."
                             )
-                            yield "\n[错误: LLM请求工具调用，但未能解析出有效的工具信息。]\n"
+                            yield "\n[error: LLM requests tool calls, but unable to parse valid tool information.]\n"
                             return
                         logger.info(
                             f"add new Tool Call to Current Messages, tool_calls={assistant_tool_calls_list}"
@@ -222,7 +222,7 @@ class OpenAIClient(LLMClient):
                         current_messages.append(
                             {
                                 "role": "assistant",
-                                "content": None,  # 文本内容已经通过 yield 流式输出了
+                                "content": None,  # Text content has already been yielded
                                 "tool_calls": [
                                     # SDK v1.x ChatCompletionMessageToolCall is not directly JSON serializable for message history
                                     # We need to convert them to dicts if we were to manually build this
@@ -251,24 +251,24 @@ class OpenAIClient(LLMClient):
                                     )
                                 )
 
-                        # 3.2 执行工具
+                        # 3.2 execute tools
                         tool_results_messages: List[Dict[str, Any]] = []
-                        # 可以考虑使用 asyncio.gather 并行执行独立的工具
+                        # can consider using asyncio.gather to parallel execute independent tools
                         for tool_data in tools_to_execute_details:
                             tool_name = tool_data["name"]
                             tool_args = tool_data["arguments"]
                             tool_call_id = tool_data["id"]
 
                             logger.info(
-                                f"开始调用工具: {tool_name}, 参数: {tool_args}, ID: {tool_call_id}"
+                                f"invoke tool: {tool_name}, args: {tool_args}, id: {tool_call_id}"
                             )
                             try:
-                                # 调用 run_tool_func，它可能返回协程或异步生成器
+                                # call run_tool_func, it may return coroutine or async generator
                                 tool_output = run_tool_func(tool_name, **tool_args)
 
                                 tool_result_content = ""
                                 if isinstance(tool_output, AsyncGenerator):
-                                    # 如果是异步生成器，累积其所有输出
+                                    # if it's async generator, accumulate all outputs
                                     accumulated_parts = []
                                     async for part in tool_output:
                                         accumulated_parts.append(str(part))
@@ -276,23 +276,23 @@ class OpenAIClient(LLMClient):
                                     if (
                                         not tool_result_content
                                         and not accumulated_parts
-                                    ):  # 区分空字符串和无任何 yield
+                                    ):  # distinguish empty string and no yield at all
                                         tool_result_content = (
-                                            "[工具执行了，但没有产生任何内容]"
+                                            "[tool executed, but no content generated]"
                                         )
                                 elif asyncio.iscoroutine(tool_output):
-                                    # 如果是协程，直接 await
+                                    # if it's coroutine, await directly
                                     tool_result_content = await tool_output
                                 else:
-                                    # 如果是同步函数返回的直接结果 (尽管 run_tool_func 期望是 async)
-                                    # 或者其他不期望的类型，先尝试转字符串
+                                    # if it's sync function return value (despite run_tool_func expects async)
+                                    # or other unexpected type, try to convert to string
                                     logger.warning(
-                                        f"工具 {tool_name} 返回了非预期类型: {type(tool_output)}。尝试转为字符串。"
+                                        f"tool {tool_name} returned unexpected type: {type(tool_output)}. Trying to convert to string."
                                     )
                                     tool_result_content = str(tool_output)
 
                                 logger.info(
-                                    f"工具 {tool_name} (ID: {tool_call_id}) 调用结果: {tool_result_content}"
+                                    f"tool {tool_name} (ID: {tool_call_id}) result: {tool_result_content}"
                                 )
                                 tool_results_messages.append(
                                     {
@@ -301,12 +301,12 @@ class OpenAIClient(LLMClient):
                                         "name": tool_name,
                                         "content": str(
                                             tool_result_content
-                                        ),  # 结果必须是字符串
+                                        ),  # result must be string
                                     }
                                 )
                             except Exception as e:
                                 logger.error(
-                                    f"工具 {tool_name} (ID: {tool_call_id}) 执行失败: {e}",
+                                    f"tool {tool_name} (ID: {tool_call_id}) execution failed: {e}",
                                     exc_info=True,
                                 )
                                 tool_results_messages.append(
@@ -314,7 +314,7 @@ class OpenAIClient(LLMClient):
                                         "role": "tool",
                                         "tool_call_id": tool_call_id,
                                         "name": tool_name,
-                                        "content": f"执行工具 {tool_name} 时出错: {str(e)}",
+                                        "content": f"error: failed to execute tool {tool_name}: {str(e)}",
                                     }
                                 )
 
@@ -329,65 +329,65 @@ class OpenAIClient(LLMClient):
                                     )
                                 )
 
-                        # 3.3 带着工具结果递归调用，继续获取LLM响应
-                        # 清空 active_tool_calls_data 为下一轮 LLM 响应做准备 (虽然在递归调用中会是新的实例)
+                        # 3.3 Recursive call, continue getting LLM response
+                        # Clear active_tool_calls_data for next LLM response (although a new instance will be created in recursive call)
                         active_tool_calls_data.clear()
 
                         async for content_piece in self.invoke_stream(
-                            system_prompt=system_prompt,  # 这些在递归中主要用于_prepare_params的默认参数
-                            user_input=user_input,  # 实际历史由 messages 控制
-                            messages=current_messages,  # 传递更新后的完整消息历史
-                            run_tool_func=run_tool_func,  # 传递工具执行函数
-                            **kwargs,  # 传递其他参数如 tools, tool_choice
+                            system_prompt=system_prompt,  # These are used for _prepare_params default parameters in recursive call
+                            user_input=user_input,  # Actual history is controlled by messages
+                            messages=current_messages,  # Pass updated complete message history
+                            run_tool_func=run_tool_func,  # Pass tool execution function
+                            **kwargs,  # Pass other parameters like tools, tool_choice
                         ):
                             yield content_piece
-                        return  # 结束本轮 invoke_stream，因为递归调用已处理后续
+                        return  # End this round of invoke_stream, because recursive call has handled the rest
 
-                # 4. 如果流正常结束 (finish_reason='stop', 'length', etc.) 且没有未处理的工具调用
+                # 4. If the stream ends normally (finish_reason='stop', 'length', etc.) and there are no unprocessed tool calls
                 if active_tool_calls_data and finish_reason != "tool_calls":
-                    # 这通常不应该发生，如果LLM打算调用工具，finish_reason应该是tool_calls
+                    # This should not happen, if LLM plans to call tools, finish_reason should be tool_calls
                     logger.warning(
-                        f"流结束 (finish_reason: {finish_reason})，但仍有未处理的工具调用数据: {active_tool_calls_data}"
+                        f"Stream ended (finish_reason: {finish_reason}), but there are still unprocessed tool call data: {active_tool_calls_data}"
                     )
-                    yield f"\n[警告: 流意外结束，可能存在未完成的工具调用请求: {list(active_tool_calls_data.keys())}]\n"
+                    yield f"\n[warning: stream ended unexpectedly, there may be incomplete tool call requests: {list(active_tool_calls_data.keys())}]\n"
 
-                break  # 成功完成或正常结束，退出重试循环
+                break  # Successfully completed or normally ended, exit retry loop
 
             except openai.RateLimitError as e:
                 retry_count += 1
                 if retry_count <= max_retries:
                     wait_time = backoff_factor**retry_count
                     logger.warning(
-                        f"API速率限制。将在 {wait_time}s 后重试。尝试 {retry_count}/{max_retries}"
+                        f"API rate limit exceeded. Will retry in {wait_time}s. Attempt {retry_count}/{max_retries}"
                     )
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error(f"API速率限制，已达最大重试次数: {e}")
-                    yield "\n错误: API速率限制超出，请稍后再试。\n"
+                    logger.error(f"API rate limit exceeded, reached maximum retry count: {e}")
+                    yield "\nError: API rate limit exceeded, please try again later.\n"
                     break
             except openai.AuthenticationError as e:
-                logger.error(f"OpenAI API认证失败: {e}", exc_info=True)
-                yield "\n错误: API认证失败，请检查API密钥配置。\n"
+                logger.error(f"OpenAI API authentication failed: {e}", exc_info=True)
+                yield "\nError: API authentication failed, please check API key configuration.\n"
                 break
             except (openai.APIConnectionError, asyncio.TimeoutError) as e:
                 retry_count += 1
                 if retry_count <= max_retries:
                     wait_time = backoff_factor**retry_count
                     logger.warning(
-                        f"连接错误: {e}. 将在 {wait_time}s 后重试。尝试 {retry_count}/{max_retries}"
+                        f"Connection error: {e}. Will retry in {wait_time}s. Attempt {retry_count}/{max_retries}"
                     )
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error(f"连接OpenAI API失败，已达最大重试次数: {e}")
-                    yield f"\n错误: 连接OpenAI API失败: {e}\n"
+                    logger.error(f"Failed to connect to OpenAI API, reached maximum retry count: {e}")
+                    yield f"\nError: Failed to connect to OpenAI API: {e}\n"
                     break
             except asyncio.CancelledError:
-                logger.info("OpenAI API请求被取消")
-                break  # 不再重试
+                logger.info("OpenAI API request cancelled")
+                break  # Do not retry
             except Exception as e:
-                logger.error(f"OpenAI API调用发生未预期错误: {e}", exc_info=True)
-                yield f"\n错误: {str(e)}\n"
-                break  # 不再重试未知错误
+                logger.error(f"Unexpected error in OpenAI API call: {e}", exc_info=True)
+                yield f"\nError: {str(e)}\n"
+                break  # Do not retry unknown error
 
     def _prepare_params(
         self,
@@ -397,18 +397,18 @@ class OpenAIClient(LLMClient):
         **kwargs,
     ) -> Dict[str, Any]:
         """
-        准备 API 调用参数
+        Prepare API call parameters
 
         Args:
-            system_prompt: 系统提示 (用于 current_messages 为 None 时)
-            prompt: 用户提示 (用于 current_messages 为 None 时)
-            current_messages: 当前的对话消息列表
-            **kwargs: 运行时参数，会覆盖实例的默认设置
+            system_prompt: System prompt (used when current_messages is None)
+            prompt: User prompt (used when current_messages is None)
+            current_messages: Current conversation message list
+            **kwargs: Runtime parameters, will override instance default settings
 
         Returns:
-            API 调用参数字典
+            API call parameters dictionary
         """
-        # 优先使用 current_messages (如果提供)
+        # Use current_messages if provided
         if current_messages:
             messages_payload = current_messages
         else:
@@ -417,19 +417,19 @@ class OpenAIClient(LLMClient):
                 {"role": "user", "content": prompt},
             ]
 
-        # 基本参数，允许被 kwargs 覆盖
+        # Basic parameters, allow being overridden by kwargs
         params: Dict[str, Any] = {
             "model": kwargs.get("model", self.model),
             "temperature": kwargs.get("temperature", self.temperature),
             "messages": messages_payload,
         }
 
-        # 可选参数
+        # Optional parameters
         max_tokens_to_use = kwargs.get("max_tokens", self.max_tokens)
         if max_tokens_to_use is not None:
             params["max_tokens"] = max_tokens_to_use
 
-        # 工具相关参数 (来自 kwargs)
+        # Tool related parameters (from kwargs)
         if "tools" in kwargs:
             params["tools"] = kwargs["tools"]
         if (
@@ -437,19 +437,19 @@ class OpenAIClient(LLMClient):
         ):  # e.g., "auto", "none", {"type": "function", "function": {"name": "my_function"}}
             params["tool_choice"] = kwargs["tool_choice"]
 
-        # 合并 self.extra_params (kwargs 中未指定的参数)
+        # Merge self.extra_params (parameters not specified in kwargs)
         for key, value in self.extra_params.items():
-            if key not in params:  # 避免覆盖已经从 kwargs 或方法固定设置的参数
+            if key not in params:  # Avoid overriding parameters already set in kwargs or method fixed settings
                 params[key] = value
 
-        # 确保 kwargs 中其他未明确处理的参数也被添加，这允许完全的灵活性
-        # 但要小心不要覆盖核心参数如 'model', 'messages', 'stream' 等已被设置的
-        # 这个逻辑可以更精细，但通常 self.extra_params 和显式 kwargs 已经覆盖多数情况
+        # Ensure other parameters not explicitly handled in kwargs are also added, allowing complete flexibility
+        # But be careful not to override core parameters like 'model', 'messages', 'stream' that have already been set
+        # This logic can be refined, but usually self.extra_params and explicit kwargs already cover most cases
         # for key, value in kwargs.items():
         #     if key not in params and key not in ["system_prompt", "prompt", "current_messages", "client_args"]:
         #         params[key] = value
-        # 上面的逻辑可能过于宽泛，如果kwargs包含内部使用的如system_prompt，不应直接加入params
-        # 通常 tools, tool_choice, response_format 等应该在kwargs中明确传递给completions.create
-        # self.extra_params 可以用来存放一些不常变动的API参数。
+        # The above logic may be too broad, if kwargs contains internal used like system_prompt, should not directly add to params
+        # Usually tools, tool_choice, response_format etc. should be explicitly passed to completions.create
+        # self.extra_params can be used to store some API parameters that do not change often.
 
         return params

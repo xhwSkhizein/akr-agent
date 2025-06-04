@@ -12,15 +12,15 @@ def get_container_workspace(sid: str) -> Path:
 
 def get_nested(data: Dict, keys: str, default: Any = None) -> Any:
     """
-    使用点表示法访问嵌套字典键。
+    Access nested dictionary keys using dot notation.
 
     Args:
-        data: 要访问的字典
-        keys: 点表示法的键路径，如 "a.b.c"
-        default: 如果键不存在时返回的默认值
+        data: The dictionary to access
+        keys: The dot notation key path, e.g. "a.b.c"
+        default: The default value to return if the key does not exist
 
     Returns:
-        找到的值或默认值
+        The value found or the default value
     """
     if not keys:
         return data
@@ -51,12 +51,12 @@ def get_nested(data: Dict, keys: str, default: Any = None) -> Any:
 
 def set_nested(data: Dict, keys: str, value: Any) -> None:
     """
-    使用点表示法设置嵌套字典键。
+    Set nested dictionary keys using dot notation.
 
     Args:
-        data: 要修改的字典
-        keys: 点表示法的键路径，如 "a.b.c"
-        value: 要设置的值
+        data: The dictionary to modify
+        keys: The dot notation key path, e.g. "a.b.c"
+        value: The value to set
     """
     if not keys:
         return

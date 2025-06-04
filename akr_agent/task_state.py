@@ -6,19 +6,19 @@ from .rule_config import RuleConfig
 
 class TaskState(enum.Enum):
     """
-    任务状态枚举
+    Task state enum
 
-    PENDING: 初始状态，任务已创建但尚未准备好执行
-    READY: 条件满足，任务准备好执行
-    EXECUTING: 任务正在执行中
-    COMPLETED: 任务已完成
-    FAILED: 任务执行失败
+    PENDING: Initial state, task is created but not ready to execute
+    READY: Conditions are met, task is ready to execute
+    EXECUTING: Task is executing
+    COMPLETED: Task is completed
+    FAILED: Task execution failed
     """
-    PENDING = "pending"     # 初始状态
-    READY = "ready"         # 条件满足，准备执行
-    EXECUTING = "executing" # 正在执行
-    COMPLETED = "completed" # 已完成
-    FAILED = "failed"       # 执行失败
+    PENDING = "pending"     # Initial state
+    READY = "ready"         # Conditions are met, task is ready to execute
+    EXECUTING = "executing" # Task is executing
+    COMPLETED = "completed" # Task is completed
+    FAILED = "failed"       # Task execution failed
 
 @dataclass
 class TaskInfo(DataClassJsonMixin):
@@ -36,14 +36,14 @@ class TaskInfo(DataClassJsonMixin):
 
 class TaskStateTransitionError(Exception):
     """
-    任务状态转换错误
+    Task state transition error
 
-    当尝试进行无效的状态转换时抛出
+    Raises when an invalid state transition is attempted
     """
     def __init__(self, current_state: TaskState, target_state: TaskState, message: Optional[str] = None):
         self.current_state = current_state
         self.target_state = target_state
-        msg = f"无效的状态转换: {current_state.value} -> {target_state.value}"
+        msg = f"Invalid state transition: {current_state.value} -> {target_state.value}"
         if message:
             msg += f": {message}"
         super().__init__(msg)

@@ -4,15 +4,15 @@
 [![Python Version](https://img.shields.io/pypi/pyversions/akr-agent.svg)](https://pypi.org/project/akr-agent/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-AKR-Agent 是一个灵活的基于规则的 AI Agent 框架，旨在帮助开发者快速构建和部署智能代理。该框架支持动态规则配置、工具注册和上下文管理，使开发者能够轻松创建各种类型的智能代理应用。
+AKR-Agent is a flexible rule-based AI Agent framework, designed to help developers quickly build and deploy intelligent agents. The framework supports dynamic rule configuration, tool registration, and context management, making it easy for developers to create various types of intelligent agent applications.
 
-## 安装
+## Installation
 
 ```bash
 pip install akr-agent
 ```
 
-## 快速开始
+## Quick Start
 
 ```python
 import asyncio
@@ -20,7 +20,7 @@ import os
 from akr_agent import Agent, ToolCenter
 from akr_agent.tools.tool_llm import LLMCallTool
 
-# 注册 LLM 工具
+# Register LLM tool
 ToolCenter.register(
     tool=LLMCallTool(
         api_key=os.environ.get("OPENAI_API_KEY"),
@@ -32,60 +32,60 @@ ToolCenter.register(
 )
 
 async def main():
-    # 创建 Agent 实例，指定配置目录
+    # Create Agent instance, specify config directory
     agent = Agent(config_dir="prompts/CoachLi/v1")
     
-    # 用户输入
-    user_input = "我想开始健身，有什么建议？"
-    print(f"\n--- 用户输入 ---\n{user_input}")
+    # User input
+    user_input = "I want to start fitness, what are the suggestions?"
+    print(f"\n--- User Input ---\n{user_input}")
     
-    # 运行 Agent 并获取响应
-    print("\n--- Agent 响应 ---")
+    # Run Agent and get response
+    print("\n--- Agent Response ---")
     async for chunk in agent.run_dynamic(user_input):
         print(chunk.content, end="", flush=True)
     
-    print("\n\n--- 完成 ---")
+    print("\n\n--- Done ---")
 
 if __name__ == "__main__":
     asyncio.run(main())
 ```
 
-## 架构设计
+## Architecture Design
 
-* 优势：项目采用了清晰的模块化设计，核心组件分工明确：
-    * Agent 作为核心类管理整体流程
-    * DynamicDispatcher 负责规则调度和执行
-    * ObservableContext 提供响应式上下文管理
-    * EventBus 实现事件驱动机制
-    * ToolCenter 提供工具注册和调用能力
+* Advantage:
+    * Agent is the core class to manage the entire process
+    * DynamicDispatcher responsible for rule scheduling and execution
+    * ObservableContext provides reactive context management
+    * EventBus implements event-driven mechanism
+    * ToolCenter provides tool registration and invocation capability
 
 
-## 核心功能
+## Core Function
 
-1. **规则引擎**：基于配置的规则系统设计灵活，支持条件匹配和动态规则生成
-2. **上下文管理**：实现了可观察的上下文机制，支持数据变更通知
-3. **工具系统**：提供了工具注册和调用的统一接口，支持异步流式输出
-4. **LLM集成**：封装了OpenAI API，支持流式响应和工具调用
+1. **Rule Engine**: Flexible rule system based on configuration, supports conditional matching and dynamic rule generation
+2. **Context Management**: Implements observable context management, supports data change notifications
+3. **Tool System**: Provides a unified interface for tool registration and invocation, supports asynchronous streaming output
+4. **LLM Integration**: Wraps OpenAI API, supports streaming responses and tool calls
 
-## 配置系统
+## Configuration System
 
-* 采用YAML配置文件管理Agent行为，包括系统提示、规则定义等
-* 支持Jinja2模板渲染，可根据上下文动态生成提示
+* Manage Agent behavior using YAML configuration files, including system prompts, rule definitions, etc.
+* Support Jinja2 template rendering, allowing dynamic generation of prompts based on context
 
-### 配置目录结构
+### Configuration Directory Structure
 
 ```
 prompts/
 └── YourAgent/version_x/
-    ├── meta.yaml           # Agent元数据
-    ├── system_prompt.yaml  # 系统提示
-    └── rules/              # 规则目录
-        ├── rule1.yaml      # 规则1
-        ├── rule2.yaml      # 规则2
-        └── ...             # 至少要确保有一条规则可以处理用户输入
+    ├── meta.yaml           # Agent metadata
+    ├── system_prompt.yaml  # System prompt
+    └── rules/              # Rule directory
+        ├── rule1.yaml      # Rule 1
+        ├── rule2.yaml      # Rule 2
+        └── ...             # At least one rule must be able to handle user input
 ```
 
-### meta.yaml 示例
+### meta.yaml Example
 
 ```yaml
 agent:
@@ -105,127 +105,127 @@ meta:
       - "Disadvantage 1"
 ```
 
-### system_prompt.yaml 示例
+### system_prompt.yaml Example
 
 ```yaml
 content: |
-  你是{{ meta.name }}, 你是一个 {{ meta.desc }}。
-  你非常乐于帮助用户进行 {{ meta.parameters.skill | join(', ') }}。
-  你更擅长帮助用户进行 {{ meta.parameters.advantages | join(', ') }}，
-  但是不擅长帮助用户进行 {{ meta.parameters.disadvantages | join(', ') }}。
+  You are {{ meta.name }}, you are a {{ meta.desc }}.
+  You are very willing to help users with {{ meta.parameters.skill | join(', ') }}.
+  You are better at helping users with {{ meta.parameters.advantages | join(', ') }},
+  but not good at helping users with {{ meta.parameters.disadvantages | join(', ') }}.
 ```
 
-### 规则配置示例
+### Rule Configuration Example
 
 ```yaml
 name: "basic_reply"
 depend_ctx_key:
   - "user_input"
-match_condition: "True"  # 始终匹配
+match_condition: "True"  # Always match
 prompt: |
-  请根据用户的问题提供有用的回答。
+  Please provide a useful answer based on the user's question.
 prompt_detail: |
-  用户的问题是：{{ user_input }}
-tool: "LLMCallTool" # 在前面注册的工具名称
+  The user's question is: {{ user_input }}
+tool: "LLMCallTool" # The tool registered in advance
 tool_params:
   ctx: ["user_input"]
   config: ["prompt", "prompt_detail"]
   extra:
     - tools:
       - "ToolNameThatLLMCanUse"
-tool_result_target: "DIRECT_RETURN" # 直接返回给用户
+tool_result_target: "DIRECT_RETURN" # Directly return to user
 ```
 
 
 
-## 自定义工具
+## Custom Tools
 
-您可以通过继承 `Tool` 基类来创建自定义工具：
+You can create custom tools by inheriting the `Tool` base class:
 
 ```python
 from typing import AsyncGenerator
 from akr_agent import Tool, ToolCenter
 
 class WeatherTool(Tool):
-    """获取天气信息的工具"""
+    """Get weather information"""
     
     name = "WeatherTool"
-    description = "获取指定城市的天气信息"
+    description = "Get weather information for a specified city"
     
     def __init__(self, api_key=None):
         self.api_key = api_key
     
     async def run(self, city: str, **kwargs) -> AsyncGenerator[str, None]:
         """
-        获取城市天气
+        Get weather information for a specified city
         
         Args:
-            city: 城市名称
+            city: City name
         """
-        # 这里实现天气API调用逻辑
-        weather_info = f"{city}的天气：晴天，温度25°C"
+        # Implement weather API call logic
+        weather_info = f"{city} weather: sunny, temperature 25°C"
         yield weather_info
 
-# 注册工具
+# Register tool
 ToolCenter.register(tool=WeatherTool(api_key="your_weather_api_key"))
 ```
 
-## 开发指南
+## Development Guide
 
-### 安装开发依赖
+### Install development dependencies
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-### 运行测试
+### Run tests
 
 ```bash
 python -m pytest tests
 ```
 
-### 代码风格
+### Code Style
 
-我们使用 Black 和 isort 来保持代码风格一致：
+We use Black and isort to maintain consistent code style:
 
 ```bash
 black akr_agent
 isort akr_agent
 ```
 
-### 类型检查
+### Type Checking
 
-使用 mypy 进行类型检查：
+Use mypy for type checking:
 
 ```bash
 mypy akr_agent
 ```
 
-## 贡献指南
+## Contribution Guide
 
-我们欢迎所有形式的贡献，包括但不限于：
+We welcome all forms of contributions, including but not limited to:
 
-1. 报告问题和建议改进
-2. 提交代码修复或新功能
-3. 改进文档
-4. 添加测试用例
+1. Reporting issues and suggesting improvements
+2. Submitting code fixes or new features
+3. Improving documentation
+4. Adding test cases
 
-### 贡献流程
+### Contribution Process
 
-1. Fork 项目仓库
-2. 创建您的特性分支 (`git checkout -b feature/amazing-feature`)
-3. 提交您的更改 (`git commit -m 'Add some amazing feature'`)
-4. 推送到分支 (`git push origin feature/amazing-feature`)
-5. 创建一个 Pull Request
+1. Fork the project repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Create a Pull Request
 
-## 路线图
+## Roadmap
 
-- [ ] 支持更多 LLM 提供商
-- [ ] 添加更多内置工具
-- [ ] 改进错误处理和恢复机制
-- [ ] 添加更多示例和文档
-- [ ] 实现缓存机制和性能优化
+- [ ] Support more LLM providers
+- [ ] Add more built-in tools
+- [ ] Improve error handling and recovery mechanisms
+- [ ] Add more examples and documentation
+- [ ] Implement caching mechanisms and performance optimization
 
-## 许可证
+## License
 
-本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details

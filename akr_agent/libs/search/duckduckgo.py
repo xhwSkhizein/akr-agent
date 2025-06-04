@@ -109,4 +109,4 @@ class DuckDuckGoSearchAPIWrapper(BaseModel):
 
 if __name__ == "__main__":
     ddgs = DuckDuckGoSearchAPIWrapper()
-    print(ddgs.run("力量训练时应注意什么？"))
+    print(ddgs.run("What should I pay attention to when strength training?"))

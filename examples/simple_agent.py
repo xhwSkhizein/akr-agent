@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 """
-AKR-Agent 简单示例
+AKR-Agent Simple Example
 """
 
 import asyncio
@@ -11,7 +11,7 @@ import logging
 import os
 import sys
 
-# 添加项目根目录到 Python 路径，方便开发时导入
+# Add project root directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from akr_agent import Agent, ToolCenter
@@ -19,7 +19,7 @@ from akr_agent.tools.tool_llm import LLMCallTool
 from akr_agent.tools.tool_search import DuckDuckGoSearchTool
 
 
-# 配置日志
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s",
@@ -29,8 +29,8 @@ logger = logging.getLogger(__name__)
 
 
 async def main():
-    """主函数"""
-    # 注册工具
+    """Main function"""
+    # Register tools
     ToolCenter.register(
         tool=LLMCallTool(
             api_key=os.environ.get("OPENAI_API_KEY"),
@@ -42,20 +42,20 @@ async def main():
     )
     ToolCenter.register(tool=DuckDuckGoSearchTool(), name="DuckDuckGoSearchTool")
     
-    # 创建 Agent 实例
+    # Create Agent instance
     agent = Agent(config_dir="examples/prompts/CoachLi/v1", sid="test")
     
-    # 用户输入
-    user_input = "我想开始健身，有什么建议？"
-    print(f"\n--- 用户输入 ---\n{user_input}")
+    # User input
+    user_input = "I want to start fitness, what are the suggestions?"
+    print(f"\n--- User Input ---\n{user_input}")
     
-    # 运行 Agent 并获取响应
-    print("\n--- Agent 响应 ---")
+    # Run Agent and get response
+    print("\n--- Agent Response ---")
     async for chunk in agent.run_dynamic(user_input):
         print(chunk.content, end="", flush=True)
     
-    print("\n\n--- 完成 ---\n")
-    print("\n--- 所有上下文 ---\n")
+    print("\n\n--- Done ---\n")
+    print("\n--- All Context ---\n")
     print(
         json.dumps(agent._context_manager.get_context().to_dict(), indent=2, ensure_ascii=False)
     )
