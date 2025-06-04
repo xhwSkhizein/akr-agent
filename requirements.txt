@@ -4,3 +4,4 @@ pytest-asyncio
 
 duckduckgo-search
 tavily-python
+crawl4ai
