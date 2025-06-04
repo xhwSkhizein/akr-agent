@@ -14,8 +14,7 @@ from openai.types.chat.chat_completion_message_tool_call import (
 )
 
 from .base import LLMClient
-from .llm_base import ToolCall, ToolResult
-
+from .llm_base import ToolCall, ToolResult, TokenUsage
 
 
 logger = logging.getLogger(__name__)
@@ -93,8 +92,12 @@ class OpenAIClient(LLMClient):
             **kwargs,  # include tools, tool_choice, etc
         )
         api_params["stream"] = True
+        api_params["stream_options"] = {
+            "include_usage": True,
+        }
         if "ctx_manager" in kwargs:
             from ..context_manager import ContextManager
+
             ctx_manager: ContextManager = kwargs.get("ctx_manager")
         else:
             ctx_manager = None
@@ -118,6 +121,39 @@ class OpenAIClient(LLMClient):
                 # current_assistant_content_parts: List[str] = []
 
                 async for chunk in response_stream:
+                    if chunk.usage:
+                        # token usage statistics
+                        total_tokens = chunk.usage.total_tokens
+                        prompt_tokens = chunk.usage.prompt_tokens
+                        completion_tokens = chunk.usage.completion_tokens
+                        completion_tokens_details = (
+                            chunk.usage.completion_tokens_details
+                        )
+                        prompt_tokens_details = chunk.usage.prompt_tokens_details
+                        if ctx_manager is not None:
+                            await ctx_manager.emit_and_append_to_history(
+                                TokenUsage(
+                                    role="assistant",
+                                    model=self.model,
+                                    total_tokens=total_tokens,
+                                    prompt_tokens=prompt_tokens,
+                                    completion_tokens=completion_tokens,
+                                    completion_tokens_details=(
+                                        completion_tokens_details.to_dict()
+                                        if completion_tokens_details
+                                        else None
+                                    ),
+                                    prompt_tokens_details=(
+                                        prompt_tokens_details.to_dict()
+                                        if prompt_tokens_details
+                                        else None
+                                    ),
+                                )
+                            )
+                        logger.info(
+                            f"Llm Call Token cost: {chunk.usage.model_dump_json()}"
+                        )
+
                     if not chunk.choices:
                         continue
                     delta = chunk.choices[0].delta
@@ -163,7 +199,9 @@ class OpenAIClient(LLMClient):
 
                         if not run_tool_func:
                             yield "\n[Error: LLM requests tool calls, but 'run_tool_func' is not provided to execute them.]\n"
-                            logger.error("LLM requests tool calls, but 'run_tool_func' is not provided.")
+                            logger.error(
+                                "LLM requests tool calls, but 'run_tool_func' is not provided."
+                            )
                             return  # end generation
 
                         # 3.1 build assistant message history (include tool call requests)
@@ -362,7 +400,9 @@ class OpenAIClient(LLMClient):
                     )
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error(f"API rate limit exceeded, reached maximum retry count: {e}")
+                    logger.error(
+                        f"API rate limit exceeded, reached maximum retry count: {e}"
+                    )
                     yield "\nError: API rate limit exceeded, please try again later.\n"
                     break
             except openai.AuthenticationError as e:
@@ -378,7 +418,9 @@ class OpenAIClient(LLMClient):
                     )
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error(f"Failed to connect to OpenAI API, reached maximum retry count: {e}")
+                    logger.error(
+                        f"Failed to connect to OpenAI API, reached maximum retry count: {e}"
+                    )
                     yield f"\nError: Failed to connect to OpenAI API: {e}\n"
                     break
             except asyncio.CancelledError:
@@ -439,7 +481,9 @@ class OpenAIClient(LLMClient):
 
         # Merge self.extra_params (parameters not specified in kwargs)
         for key, value in self.extra_params.items():
-            if key not in params:  # Avoid overriding parameters already set in kwargs or method fixed settings
+            if (
+                key not in params
+            ):  # Avoid overriding parameters already set in kwargs or method fixed settings
                 params[key] = value
 
         # Ensure other parameters not explicitly handled in kwargs are also added, allowing complete flexibility

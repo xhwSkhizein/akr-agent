@@ -10,6 +10,7 @@ from .llm.llm_base import (
     ToolCall,
     ToolResult,
     TextResult,
+    TokenUsage,
 )
 from .task_state import TaskState, TaskInfo
 from .rule_config import RuleConfig
@@ -64,6 +65,10 @@ class ContextManager:
         elif isinstance(message, TextResult):
             self.emit_event(
                 RealTimeEvent(type=EventType.AGENT_RESPONSE, data=message.to_dict())
+            )
+        elif isinstance(message, TokenUsage):
+            self.emit_event(
+                RealTimeEvent(type=EventType.TOKEN_USAGE, data=message.to_dict())
             )
 
     def emit_task_executing(self, task_info: TaskInfo):

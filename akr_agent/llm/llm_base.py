@@ -1,7 +1,7 @@
 # Copy from https://github.com/Intelligent-Internet/ii-agent
 
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Optional
 from dataclasses_json import DataClassJsonMixin
 from typing import Literal
 
@@ -85,8 +85,20 @@ class TextResult(DataClassJsonMixin):
     role: Literal["assistant"] = "assistant"
 
 
+@dataclass
+class TokenUsage(DataClassJsonMixin):
+    """Internal representation of LLM token usage."""
+    model: str
+    total_tokens: int
+    prompt_tokens: int
+    completion_tokens: int
+    completion_tokens_details: Optional[dict[str, Any]]
+    prompt_tokens_details: Optional[dict[str, Any]]
+    role: Literal["user", "assistant"] = "assistant"
+
+
 # agent content block
-AssistantContentBlock = TextResult | ToolCall | AIContext
+AssistantContentBlock = TextResult | ToolCall | AIContext | TokenUsage
 
 # user content block
 UserContentBlock = TextPrompt | ToolFormattedResult

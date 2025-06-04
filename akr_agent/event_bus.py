@@ -10,6 +10,7 @@ class EventType(str, enum.Enum):
     USER_MESSAGE = "user_message"  # User input
     TOOL_CALL = "tool_call"  # ToolCall
     TOOL_RESULT = "tool_result"  # ToolResult
+    TOKEN_USAGE = "token_usage"  # Token usage
     AGENT_RESPONSE = "agent_response"  # AgentResponse
     CONTEXT_CHANGED = "context_changed"  # Internal system-triggered context change
     NEW_RULE_GENERATED = "new_rule_generated"  # New rule generated
