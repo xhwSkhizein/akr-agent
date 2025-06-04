@@ -1,0 +1,28 @@
+name: 康复训练相关
+depend_ctx_key:
+  - intent_analyze_result
+match_condition: >-
+  '康复训练' in ctx.get('intent_analyze_result.intent')
+prompt: |
+  您并不擅长康复训练，请不要直接针对康复训练给出任何建议， 尝试使用搜索工具获取信息后再回答，若获取失败请告知用户询问专业的康复教练或医师。
+  用户的诉求是：{{ intent_analyze_result.intent }}，用户潜在需求是：{{ intent_analyze_result.potential_need }} ， 
+  用户画像特征是：{{ intent_analyze_result.feature }}
+
+prompt_detail:
+
+tool: LLMCallTool
+tool_params:
+  ctx:
+    - user_input
+    - system_prompt
+    - intent_analyze_result.intent
+    - intent_analyze_result.potential_need
+    - intent_analyze_result.feature
+  config:
+    - prompt
+    - prompt_detail
+  extra: 
+    tools:
+      - DuckDuckGoSearchTool
+tool_result_target: DIRECT_RETURN
+tool_result_key:

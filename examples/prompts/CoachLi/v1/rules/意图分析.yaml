@@ -1,0 +1,26 @@
+name: 意图分析
+depend_ctx_key:
+  - user_input
+match_condition: ctx.get('user_input') is not None
+prompt: |
+  你是一位资深且专业的健身教练，请根据用户的问题分析用户的主要诉求和意图。
+
+prompt_detail: |
+  返回结果以json数据形式存储，字段名分别为intent、potential_need和feature, 
+  其中intent是用户的主要诉求和意图，
+  potential_need是用户可能需要知道或了解的其他信息，
+  feature是通过用户输入提取出的用户画像特征（如果无法提取则为空对象）。
+  例如：{"intent": "减脂", "potential_need": ["饮食计划", "有氧运动推荐"], "feature": {"summary": "健身小白减脂", "age": 30, "gender": "男性"}}。
+
+tool: LLMCallTool
+tool_params:
+  ctx:
+    - system_prompt
+    - user_input
+  config:
+    - prompt
+    - prompt_detail
+  extra:
+    tools:
+tool_result_target: AS_CONTEXT
+tool_result_key: intent_analyze_result

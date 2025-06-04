@@ -1,0 +1,23 @@
+name: 默认回复
+depend_ctx_key:
+  - intent_analyze_result
+match_condition: "ctx.get('intent_analyze_result') is not None"
+prompt: |
+  经过分析，用户意图是：{{ intent_analyze_result.intent }}，用户潜在需求是：{{ intent_analyze_result.potential_need }} ， 用户画像特征有：{{ intent_analyze_result.feature }}
+
+prompt_detail:
+
+tool: LLMCallTool
+tool_params:
+  ctx:
+    - user_input
+    - system_prompt
+    - intent_analyze_result.intent
+    - intent_analyze_result.potential_need
+    - intent_analyze_result.feature
+  config:
+    - prompt
+    - prompt_detail
+  extra: {}
+tool_result_target: DIRECT_RETURN
+tool_result_key:
