@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "akr-agent"
-description = "DeepSea Agent - 一个灵活的基于规则的 AI Agent 框架"
+description = "Akr Agent - 一个灵活的基于规则的 AI Agent 框架"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
@@ -48,6 +48,7 @@ packages = ["akr_agent"]
 
 [tool.setuptools_scm]
 write_to = "akr_agent/_version.py"
+local_scheme = "no-local-version"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
