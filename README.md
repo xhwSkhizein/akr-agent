@@ -1,123 +1,231 @@
-# Akr, agent know rules
+# AKR-Agent: Agent Know Rules
 
+[![PyPI version](https://badge.fury.io/py/akr-agent.svg)](https://badge.fury.io/py/akr-agent)
+[![Python Version](https://img.shields.io/pypi/pyversions/akr-agent.svg)](https://pypi.org/project/akr-agent/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+AKR-Agent 是一个灵活的基于规则的 AI Agent 框架，旨在帮助开发者快速构建和部署智能代理。该框架支持动态规则配置、工具注册和上下文管理，使开发者能够轻松创建各种类型的智能代理应用。
+
+## 安装
+
+```bash
+pip install akr-agent
+```
+
+## 快速开始
+
+```python
+import asyncio
+import os
+from akr_agent import Agent, ToolCenter
+from akr_agent.tools.tool_llm import LLMCallTool
+
+# 注册 LLM 工具
+ToolCenter.register(
+    tool=LLMCallTool(
+        api_key=os.environ.get("OPENAI_API_KEY"),
+        model="gpt-4o-mini",
+        temperature=0.7,
+        max_tokens=1000,
+        stream=True,
+    )
+)
+
+async def main():
+    # 创建 Agent 实例，指定配置目录
+    agent = Agent(config_dir="prompts/CoachLi/v1")
+    
+    # 用户输入
+    user_input = "我想开始健身，有什么建议？"
+    print(f"\n--- 用户输入 ---\n{user_input}")
+    
+    # 运行 Agent 并获取响应
+    print("\n--- Agent 响应 ---")
+    async for chunk in agent.run_dynamic(user_input):
+        print(chunk.content, end="", flush=True)
+    
+    print("\n\n--- 完成 ---")
+
+if __name__ == "__main__":
+    asyncio.run(main())
+```
 
 ## 架构设计
 
 * 优势：项目采用了清晰的模块化设计，核心组件分工明确：
     * Agent 作为核心类管理整体流程
-    * RuleDispatcher 负责规则调度和执行
-    * ObservableCtx 提供响应式上下文管理
+    * DynamicDispatcher 负责规则调度和执行
+    * ObservableContext 提供响应式上下文管理
     * EventBus 实现事件驱动机制
     * ToolCenter 提供工具注册和调用能力
 
 
 ## 核心功能
 
-1. 规则引擎：基于配置的规则系统设计灵活，支持条件匹配和动态规则生成
-2. 上下文管理：实现了可观察的上下文机制，支持数据变更通知
-3. 工具系统：提供了工具注册和调用的统一接口，支持异步流式输出
-4. LLM集成：封装了OpenAI API，支持流式响应和工具调用
+1. **规则引擎**：基于配置的规则系统设计灵活，支持条件匹配和动态规则生成
+2. **上下文管理**：实现了可观察的上下文机制，支持数据变更通知
+3. **工具系统**：提供了工具注册和调用的统一接口，支持异步流式输出
+4. **LLM集成**：封装了OpenAI API，支持流式响应和工具调用
 
-
-### 配置系统
+## 配置系统
 
 * 采用YAML配置文件管理Agent行为，包括系统提示、规则定义等
 * 支持Jinja2模板渲染，可根据上下文动态生成提示
 
+### 配置目录结构
+
+```
+prompts/
+└── YourAgent/version_x/
+    ├── meta.yaml           # Agent元数据
+    ├── system_prompt.yaml  # 系统提示
+    └── rules/              # 规则目录
+        ├── rule1.yaml      # 规则1
+        ├── rule2.yaml      # 规则2
+        └── ...             # 至少要确保有一条规则可以处理用户输入
+```
+
+### meta.yaml 示例
+
+```yaml
+agent:
+  name: "Your Agent Name"
+  version: "v1"
+
+meta:
+  name: "Agent Display Name"
+  desc: "Description of your agent"
+  parameters:
+    skill: 
+      - "Skill 1"
+      - "Skill 2"
+    advantages:
+      - "Advantage 1"
+    disadvantages:
+      - "Disadvantage 1"
+```
+
+### system_prompt.yaml 示例
+
+```yaml
+content: |
+  你是{{ meta.name }}, 你是一个 {{ meta.desc }}。
+  你非常乐于帮助用户进行 {{ meta.parameters.skill | join(', ') }}。
+  你更擅长帮助用户进行 {{ meta.parameters.advantages | join(', ') }}，
+  但是不擅长帮助用户进行 {{ meta.parameters.disadvantages | join(', ') }}。
+```
+
+### 规则配置示例
+
+```yaml
+name: "basic_reply"
+depend_ctx_key:
+  - "user_input"
+match_condition: "True"  # 始终匹配
+prompt: |
+  请根据用户的问题提供有用的回答。
+prompt_detail: |
+  用户的问题是：{{ user_input }}
+tool: "LLMCallTool" # 在前面注册的工具名称
+tool_params:
+  ctx: ["user_input"]
+  config: ["prompt", "prompt_detail"]
+  extra:
+    - tools:
+      - "ToolNameThatLLMCanUse"
+tool_result_target: "DIRECT_RETURN" # 直接返回给用户
+```
 
 
-###  dev
 
-- python -m pytest tests   # 运行测试
+## 自定义工具
 
+您可以通过继承 `Tool` 基类来创建自定义工具：
 
+```python
+from typing import AsyncGenerator
+from akr_agent import Tool, ToolCenter
 
----
-
-## 待改进
-
-### 架构层面
-
-* 错误处理机制不完善：
-    - ✅ 多处使用简单的try-except但缺乏系统化的错误恢复策略
-    - ✅ RuleTask.execute_tool中的错误处理较为简单，可能导致任务状态不一致
-
-* 异步流程管理：
-    - ✅ dispatcher.py中的异步任务管理较为复杂，可能存在边缘情况未处理
-    - ✅ dispatch_initial方法为空实现(标记为TODO)，影响初始化流程
-
-* 代码文档不足：
-    - ✅ 部分关键方法缺乏详细文档说明
-    - ✅ 缺少架构图和详细的开发指南
-
-* 功能层面
-    * 工具系统扩展性：
-        - ⬜️ 当前仅实现了LLM调用工具，缺少更多实用工具
-        - ⬜️ 工具参数解析逻辑较为简单，对复杂参数支持有限
+class WeatherTool(Tool):
+    """获取天气信息的工具"""
     
-    * LLM客户端实现：
-        - ⬜️ 仅支持OpenAI，缺少其他LLM提供商的实现
-        - ⬜️ _prepare_params方法中存在参数处理逻辑不清晰的问题
+    name = "WeatherTool"
+    description = "获取指定城市的天气信息"
+    
+    def __init__(self, api_key=None):
+        self.api_key = api_key
+    
+    async def run(self, city: str, **kwargs) -> AsyncGenerator[str, None]:
+        """
+        获取城市天气
+        
+        Args:
+            city: 城市名称
+        """
+        # 这里实现天气API调用逻辑
+        weather_info = f"{city}的天气：晴天，温度25°C"
+        yield weather_info
 
-    * 测试覆盖不足：
-        - ⬜️ 未看到测试文件，缺乏单元测试和集成测试
-        - ⬜️ 缺少性能基准测试
+# 注册工具
+ToolCenter.register(tool=WeatherTool(api_key="your_weather_api_key"))
+```
 
-## 潜在风险和不合理之处
+## 开发指南
 
-* 安全风险
-    * 代码执行风险：
-        - ⬜️ RuleTask.is_condition_meet中使用eval执行条件表达式，尽管有一定限制但仍存在安全风险
-        - ⬜️ 缺少输入验证和清理机制
+### 安装开发依赖
 
-    * API密钥管理：
-        - ⬜️ OpenAI API密钥直接从环境变量读取，缺少安全存储机制
-        - ⬜️ 缺少API密钥轮换和监控机制
+```bash
+pip install -e ".[dev]"
+```
 
-* 稳定性风险
+### 运行测试
 
-    * 资源管理：
-        - ⬜️ 缺少对LLM API调用的限流和重试机制
-        - ⬜️ 缺少超时处理和熔断机制
+```bash
+python -m pytest tests
+```
 
-    * 状态一致性：
-        - ⬜️ 规则执行过程中可能出现状态不一致问题
-        - ⬜️ 缺少事务机制确保上下文更新的原子性
+### 代码风格
 
-    * 内存管理：
-        - ⬜️ 上下文数据持续增长可能导致内存问题
-        - ⬜️ 缺少上下文数据清理和压缩机制
+我们使用 Black 和 isort 来保持代码风格一致：
 
-## 设计不合理之处
+```bash
+black akr_agent
+isort akr_agent
+```
 
-* 配置耦合：
-    - ⬜️ 配置结构与代码逻辑紧密耦合，修改配置格式需要修改代码
-    - ⬜️ 缺少配置验证机制
+### 类型检查
 
-* 扩展性限制：
-    - ⬜️ ObservableCtx实现较为简单，对复杂数据结构的支持有限
-    - ⬜️ 事件总线设计简单，缺少事件过滤和优先级机制
+使用 mypy 进行类型检查：
 
-## 建议改进方向
+```bash
+mypy akr_agent
+```
 
-* 增强错误处理：
-    - ⬜️ 实现统一的错误处理策略
-    - ⬜️ 添加重试机制和降级策略
+## 贡献指南
 
-* 完善文档和测试：
-    - ⬜️ 添加详细的API文档和架构说明
-    - ⬜️ 实现全面的单元测试和集成测试
+我们欢迎所有形式的贡献，包括但不限于：
 
-* 增强安全性：
-    - ⬜️ 替换eval为更安全的条件评估机制
-    - ⬜️ 实现更安全的配置和密钥管理
+1. 报告问题和建议改进
+2. 提交代码修复或新功能
+3. 改进文档
+4. 添加测试用例
 
-* 扩展功能：
-    - ⬜️ 实现更多实用工具
-    - ⬜️ 支持多种LLM提供商
-    - ⬜️ 添加监控和日志分析功能
+### 贡献流程
 
-* 优化性能：
-    - ⬜️ 实现缓存机制
-    - ⬜️ 优化上下文数据结构
-    - ⬜️ 添加性能监控指标
+1. Fork 项目仓库
+2. 创建您的特性分支 (`git checkout -b feature/amazing-feature`)
+3. 提交您的更改 (`git commit -m 'Add some amazing feature'`)
+4. 推送到分支 (`git push origin feature/amazing-feature`)
+5. 创建一个 Pull Request
+
+## 路线图
+
+- [ ] 支持更多 LLM 提供商
+- [ ] 添加更多内置工具
+- [ ] 改进错误处理和恢复机制
+- [ ] 添加更多示例和文档
+- [ ] 实现缓存机制和性能优化
+
+## 许可证
+
+本项目采用 MIT 许可证 - 详见 [LICENSE](LICENSE) 文件

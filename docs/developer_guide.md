@@ -16,7 +16,7 @@
 
 ### 依赖安装
 
-首先，确保你已经安装了Python 3.8+，然后安装DeepSea Agent的依赖：
+首先，确保你已经安装了Python 3.8+，然后安装Akr-Agent的依赖：
 
 ```bash
 pip install -r requirements.txt
@@ -30,12 +30,6 @@ pip install -r requirements.txt
 export OPENAI_API_KEY=your_api_key_here
 ```
 
-或者在代码中设置：
-
-```python
-os.environ["OPENAI_API_KEY"] = "your_api_key_here"
-```
-
 ## 快速开始
 
 以下是一个基本的示例，展示如何创建和运行一个简单的Agent：
@@ -43,9 +37,9 @@ os.environ["OPENAI_API_KEY"] = "your_api_key_here"
 ```python
 import asyncio
 import os
-from core.agent import Agent
-from core.tools.base import ToolCenter
-from core.tools.tool_llm import LLMCallTool
+from agent import Agent
+from tools.base import ToolCenter
+from tools.tool_llm import LLMCallTool
 
 # 注册LLM工具
 ToolCenter.register(
@@ -63,7 +57,7 @@ async def main():
     agent = Agent(config_dir="prompts/CoachLi/v1")
     
     # 用户输入
-    user_input = "我刚刚摔断了腿，应该怎么进行康复训练？"
+    user_input = "我大腿骨折了，应该怎么进行康复训练？"
     print(f"\n--- 用户输入 ---\n{user_input}")
     
     # 运行Agent并获取响应
@@ -71,6 +65,10 @@ async def main():
         print(chunk.content, end="", flush=True)
     
     print("\n--- 完成 ---\n")
+    print("\n--- 所有上下文 ---\n")
+    print(
+        json.dumps(agent._context_manager.get_context().to_dict(), indent=2, ensure_ascii=False)
+    )
 
 if __name__ == "__main__":
     asyncio.run(main())
@@ -84,13 +82,13 @@ if __name__ == "__main__":
 
 ```
 prompts/
-└── YourAgent/
-    ├── meta.yaml        # Agent元数据
+└── YourAgent/version_x/
+    ├── meta.yaml           # Agent元数据
     ├── system_prompt.yaml  # 系统提示
-    └── rules/           # 规则目录
-        ├── rule1.yaml   # 规则1
-        ├── rule2.yaml   # 规则2
-        └── ...
+    └── rules/              # 规则目录
+        ├── rule1.yaml      # 规则1
+        ├── rule2.yaml      # 规则2
+        └── ...             # 至少要确保有一条规则可以处理用户输入
 ```
 
 ### meta.yaml
@@ -133,11 +131,11 @@ prompt: |
   请根据用户的问题提供有用的回答。
 prompt_detail: |
   用户的问题是：{{ user_input }}
-tool: "LLMCallTool"
+tool: "LLMCallTool" # 在前面注册的工具名称
 tool_params:
   ctx: ["user_input"]
   config: ["prompt", "prompt_detail"]
-tool_result_target: "DIRECT_RETURN"
+tool_result_target: "DIRECT_RETURN" # 直接返回给用户
 ```
 
 ## 自定义工具
@@ -193,24 +191,12 @@ tool: "LLMCallTool"
 tool_params:
   ctx: ["user_input"]
   config: ["prompt", "prompt_detail"]
-tool_result_target: "AS_CONTEXT"
-tool_result_key: "weather_city_analysis"
-```
-
-然后创建一个调用天气工具的规则（rules/call_weather_tool.yaml）：
-
-```yaml
-name: "call_weather_tool"
-depend_ctx_key: ["weather_city_analysis"]
-match_condition: "'city' in ctx.get('weather_city_analysis')"
-prompt: ""
-prompt_detail: ""
-tool: "WeatherTool"
-tool_params:
-  ctx: ["weather_city_analysis"]
-  extra: {}
+  extra:
+    tools:
+      - WeatherTool # 指定 LLM 可以使用的工具名称
 tool_result_target: "DIRECT_RETURN"
 ```
+
 
 ## 规则配置详解
 
@@ -226,6 +212,9 @@ tool_result_target: "DIRECT_RETURN"
   - **ctx**: 从上下文中获取的参数
   - **config**: 从规则配置中获取的参数
   - **extra**: 额外的固定参数
+    - **tools**: 指定 LLM 可以使用的工具名称列表
+    - **model**: 指定 LLM 模型名称
+    - **others**: 其他额外的参数
 - **tool_result_target**: 工具执行结果的处理方式
   - **AS_CONTEXT**: 将结果存储到上下文中
   - **DIRECT_RETURN**: 直接返回给用户
