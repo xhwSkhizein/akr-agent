@@ -467,6 +467,9 @@ class OpenAIClient(LLMClient):
             )
         else:
             new_input.append({"type": "text", "text": user_input})
+        current_messages.append({"role": "user", "content": new_input})
+        
+        logger.warning(f"OpenAI History messages: {current_messages}")
         
         # Basic parameters, allow being overridden by kwargs
         params: Dict[str, Any] = {

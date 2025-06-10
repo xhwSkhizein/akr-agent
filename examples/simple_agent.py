@@ -40,12 +40,13 @@ async def main():
     agent = Agent(config_dir="examples/prompts/CoachLi/v1", sid="test")
     
     # User input
-    user_input = "I want to start fitness, what are the suggestions?"
+    user_input = "具体描述食物组成、克重预估"
+    image_url = "https://i.ibb.co/NMhXwPD/72d59001-b6a7-473c-9b76-32ea9f959363.png"
     logger.info(f"\n--- User Input ---\n{user_input}")
     
     # Run Agent and get response
     logger.info("\n--- Agent Response ---")
-    async for chunk in agent.run_dynamic(user_input):
+    async for chunk in agent.run_dynamic(user_input, image_url=image_url):
         logger.info(chunk.content)
     
     logger.info("\n\n--- Done ---\n")
