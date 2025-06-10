@@ -4,10 +4,7 @@
 """
 Prompt configuration engine, responsible for loading and managing Agent prompt configuration
 """
-import logging
-
-logger = logging.getLogger(__name__)
-
+from loguru import logger
 import os
 from typing import List, Dict, Any
 import yaml
@@ -28,7 +25,7 @@ class AgentConfigEngine:
     @staticmethod
     def _render_template(template_str: str, context: Dict[str, Any]) -> str:
         """Render Jinja2 template"""
-        template = Template(template_str)
+        template:Template = Template(template_str)
         return template.render(**context)
 
     @staticmethod

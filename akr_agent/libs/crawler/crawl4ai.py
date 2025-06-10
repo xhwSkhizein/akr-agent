@@ -1,5 +1,6 @@
 import asyncio
-import logging
+import loguru
+from loguru._logger import Logger
 from crawl4ai import *
 from crawl4ai import content_filter_strategy
 from crawl4ai.models import RunManyReturn
@@ -50,17 +51,17 @@ class Crawl4AIWrapper(BaseModel):
             )
             # Check success status
             if not result.success:
-                logging.error(result.error)
+                loguru.logger.error(result.error)
                 return ""
 
             # print(result.cleaned_html)  # Cleaned HTML
             if result.markdown:
-                logging.info("--==--" * 50 + "\n RAW MARKDOWN\n")
-                logging.info(
+                loguru.logger.info("--==--" * 50 + "\n RAW MARKDOWN\n")
+                loguru.logger.info(
                     result.markdown.raw_markdown
                 )  # Raw markdown from cleaned html
-                logging.info("--==--" * 50 + "\n FIT MARKDOWN\n")
-                logging.info(
+                loguru.logger.info("--==--" * 50 + "\n FIT MARKDOWN\n")
+                loguru.logger.info(
                     result.markdown.fit_markdown
                 )  # Most relevant content in markdown
                 return (

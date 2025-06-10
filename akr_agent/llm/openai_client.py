@@ -2,10 +2,10 @@
 OpenAI LLM client implementation
 """
 
-import logging
 import asyncio
 from typing import Any, AsyncGenerator, Dict, Optional, List, Callable
 import json
+import traceback
 import openai
 from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionChunk
@@ -16,8 +16,7 @@ from openai.types.chat.chat_completion_message_tool_call import (
 from .base import LLMClient
 from .llm_base import ToolCall, ToolResult, TokenUsage
 
-
-logger = logging.getLogger(__name__)
+from loguru import logger
 
 
 class OpenAIClient(LLMClient):
@@ -51,7 +50,7 @@ class OpenAIClient(LLMClient):
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.extra_params = kwargs  # other parameters passed to completions.create
-        logging.info(f"Initialize OpenAI client, model: {model}")
+        logger.info(f"Initialize OpenAI client, model: {model}")
 
     async def invoke_stream(
         self,
@@ -91,12 +90,14 @@ class OpenAIClient(LLMClient):
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
         }
-        api_params.update(self._prepare_params(
-            system_prompt=system_prompt,  # pass to _prepare_params for possible initial message building logic
-            prompt=user_input,  # same as above
-            current_messages=current_messages,  # most important: pass current message history
-            **kwargs,  # include tools, tool_choice, etc
-        ))
+        api_params.update(
+            self._prepare_params(
+                system_prompt=system_prompt,  # pass to _prepare_params for possible initial message building logic
+                prompt=user_input,  # same as above
+                current_messages=current_messages,  # most important: pass current message history
+                **kwargs,  # include tools, tool_choice, etc
+            )
+        )
         api_params["stream"] = True
         api_params["stream_options"] = {
             "include_usage": True,
@@ -114,7 +115,7 @@ class OpenAIClient(LLMClient):
 
         while retry_count <= max_retries:
             try:
-                logging.debug(f"OPENAI invoke stream params: {api_params}")
+                logger.info(f"OPENAI invoke stream params: {api_params}")
                 response_stream: AsyncGenerator[ChatCompletionChunk, None] = (
                     await self.client.chat.completions.create(**api_params)
                 )
@@ -350,8 +351,7 @@ class OpenAIClient(LLMClient):
                                 )
                             except Exception as e:
                                 logger.error(
-                                    f"tool {tool_name} (ID: {tool_call_id}) execution failed: {e}",
-                                    exc_info=True,
+                                    f"tool {tool_name} (ID: {tool_call_id}) execution failed: err={e}, trace={traceback.format_exc()}"
                                 )
                                 tool_results_messages.append(
                                     {
@@ -412,7 +412,7 @@ class OpenAIClient(LLMClient):
                     yield "\nError: API rate limit exceeded, please try again later.\n"
                     break
             except openai.AuthenticationError as e:
-                logger.error(f"OpenAI API authentication failed: {e}", exc_info=True)
+                logger.error(f"OpenAI API authentication failed: {e}")
                 yield "\nError: API authentication failed, please check API key configuration.\n"
                 break
             except (openai.APIConnectionError, asyncio.TimeoutError) as e:
@@ -433,7 +433,9 @@ class OpenAIClient(LLMClient):
                 logger.info("OpenAI API request cancelled")
                 break  # Do not retry
             except Exception as e:
-                logger.error(f"Unexpected error in OpenAI API call: {e}", exc_info=True)
+                logger.error(
+                    f"Unexpected error in OpenAI API call: err={e}, trace={traceback.format_exc()}"
+                )
                 yield f"\nError: {str(e)}\n"
                 break  # Do not retry unknown error
 
@@ -491,11 +493,12 @@ class OpenAIClient(LLMClient):
                 key not in params
             ):  # Avoid overriding parameters already set in kwargs or method fixed settings
                 params[key] = value
-                
-        if "tools" in params and params["tools"] is []:
+
+        if len(params.get("tools", [])) == 0:
             params.pop("tools")
-            params.pop("tool_choice")
-        if "tool_choice" in params and params["tool_choice"] is []:
+            if "tool_choice" in params:
+                params.pop("tool_choice")
+        if "tool_choice" in params and len(params["tool_choice"]) == 0:
             params.pop("tool_choice")
 
         # Ensure other parameters not explicitly handled in kwargs are also added, allowing complete flexibility

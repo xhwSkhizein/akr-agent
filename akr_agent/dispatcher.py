@@ -1,4 +1,5 @@
-import logging
+import loguru
+from loguru._logger import Logger
 import asyncio
 from typing import List, AsyncGenerator
 from .workspace_manager import WorkspaceManager
@@ -25,7 +26,7 @@ class DynamicDispatcher:
         max_concurrent_tasks: int,
         timeout_detection_time: int,
         stream_registration_timeout: int,
-        logger: logging.Logger,
+        logger: Logger,
     ):
         self._rules = initial_rules
         self._workspace_manager = workspace_manager

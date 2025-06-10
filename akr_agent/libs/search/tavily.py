@@ -5,9 +5,10 @@ In order to set this up, follow instructions at:
 
 import json
 from typing import Dict, List, Optional
-import logging
+import loguru
+from loguru._logger import Logger
 
-logger = logging.getLogger(__name__)
+logger = loguru.logger
 
 import aiohttp
 import requests

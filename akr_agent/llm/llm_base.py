@@ -6,11 +6,6 @@ from dataclasses_json import DataClassJsonMixin
 from typing import Literal
 
 
-import logging
-
-logging.getLogger("httpx").setLevel(logging.WARNING)
-
-
 @dataclass
 class ToolCallParameters:
     tool_call_id: str
@@ -88,6 +83,7 @@ class TextResult(DataClassJsonMixin):
 @dataclass
 class TokenUsage(DataClassJsonMixin):
     """Internal representation of LLM token usage."""
+
     model: str
     total_tokens: int
     prompt_tokens: int
@@ -108,4 +104,3 @@ GeneralContentBlock = UserContentBlock | AssistantContentBlock
 
 # LLM messages
 LLMMessages = list[list[GeneralContentBlock]]
-

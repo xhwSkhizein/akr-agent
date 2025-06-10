@@ -4,7 +4,8 @@ Tool base class and registry
 
 import functools
 import inspect
-import logging
+import loguru
+from loguru._logger import Logger
 from abc import ABC, abstractmethod
 from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Type, Union
 from docstring_parser import parse
@@ -88,19 +89,19 @@ class ToolCenter:
             tool_instance = tool()
             tool_name = name or tool_instance.name or tool.__name__
             ToolCenter._tools[tool_name] = tool_instance
-            logging.info(f"Register tool class: {tool_name}")
+            loguru.logger.info(f"Register tool class: {tool_name}")
 
         elif isinstance(tool, Tool):
             # If it's a tool instance
             tool_name = name or tool.name or tool.__class__.__name__
             ToolCenter._tools[tool_name] = tool
-            logging.info(f"Register tool instance: {tool_name}")
+            loguru.logger.info(f"Register tool instance: {tool_name}")
 
         elif callable(tool):
             # If it's a function
             tool_name = name or tool.__name__
             ToolCenter._tools[tool_name] = tool
-            logging.info(f"Register tool function: {tool_name}")
+            loguru.logger.info(f"Register tool function: {tool_name}")
 
         else:
             raise TypeError(f"Unsupported tool type: {type(tool)}")

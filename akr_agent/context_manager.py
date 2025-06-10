@@ -1,5 +1,6 @@
-import logging
 import time
+import loguru
+from loguru._logger import Logger
 from typing import Callable, Optional
 import asyncio
 from .event_bus import EventBus, RealTimeEvent, EventType
@@ -18,7 +19,7 @@ from .rule_config import RuleConfig
 
 class ContextManager:
 
-    def __init__(self, logger: logging.Logger):
+    def __init__(self, logger: Logger):
         self._event_bus = EventBus(logger=logger) 
         self._ctx = ObservableCtx(self._event_bus, logger) 
         self._message_history = asyncio.PriorityQueue()

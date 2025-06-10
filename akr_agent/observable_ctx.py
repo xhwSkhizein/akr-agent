@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional
-import logging
+import loguru
+from loguru._logger import Logger
 import json
 
 from .utils import get_nested, set_nested
@@ -41,9 +42,9 @@ class Context:
 
 class ObservableCtx:
 
-    def __init__(self, event_bus: EventBus, logger: logging.Logger):
+    def __init__(self, event_bus: EventBus, logger: Logger):
         self._event_bus: EventBus = event_bus
-        self._logger: logging.Logger = logger
+        self._logger: Logger = logger
         self._data: Context = Context()
 
     def set(self, key: str, value: Any) -> None:
@@ -70,7 +71,7 @@ class ObservableCtx:
         new_value = old_value.copy()
         new_value.append(value)
         self._data.set(key, new_value)
-        self._logger.info(
+        self._logger.debug(
             f"Ctx append: key='{key}', value='{new_value}', old_value='{old_value}'"
         )
         self._event_bus.emit(

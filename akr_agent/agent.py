@@ -5,7 +5,8 @@
 Agent core class
 """
 
-import logging
+import loguru
+from loguru._logger import Logger
 from typing import AsyncGenerator
 
 from .agent_config_engine import AgentConfigEngine
@@ -31,7 +32,7 @@ class Agent:
             sid: Session ID
         """
         # FIXME: logger use sid
-        self._logger = logging.getLogger(__name__)
+        self._logger = loguru.logger
         
         if not config_dir or not config_dir.strip():
             raise ValueError("config_dir must be provided")

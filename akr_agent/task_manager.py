@@ -2,8 +2,10 @@
 from typing import Dict, Optional, List
 import asyncio
 import time
-import logging
+import traceback
 import uuid
+import loguru
+from loguru._logger import Logger
 
 from .context_manager import ContextManager
 from .task_executor import TaskExecutor
@@ -33,14 +35,14 @@ class TaskManager:
         context_manager: ContextManager,
         executor: TaskExecutor,
         output_manager: OutputStreamManager,
-        logger: logging.Logger,
+        logger: Logger,
         max_concurrent_tasks: int = 10,
         timeout_detection_time: int = 60,
     ):
         self._context_manager: ContextManager = context_manager
         self._executor: TaskExecutor = executor
         self._output_manager: OutputStreamManager = output_manager
-        self._logger: logging.Logger = logger
+        self._logger: Logger = logger
         self._tasks: Dict[str, TaskInfo] = {}  # task_id -> task_info
         self._task_semaphore = asyncio.Semaphore(max_concurrent_tasks)
         # Task monitor
@@ -126,7 +128,7 @@ class TaskManager:
                 f"Task {task_id} (Name: {rule_config.name}) is scheduled for execution. stream_id={stream_id}"
             )
         except Exception as e:
-            self._logger.error(f"Error scheduling task {task_id}: {e}")
+            self._logger.error(f"Error scheduling task {task_id}: {e} {traceback.format_exc()}")
             self.release_execution_slot()
             await self._set_task_state(task_id, TaskState.FAILED, success=False, error=str(e))
             
@@ -270,13 +272,13 @@ class TaskManager:
                                 )
                             except Exception as e:
                                 self._logger.error(
-                                    f"Error handling stuck task {task_id}: {e}"
+                                    f"Error handling stuck task {task_id}: {e} {traceback.format_exc()}"
                                 )
                         
         except asyncio.CancelledError:
             self._logger.debug("Monitor task cancelled")
         except Exception as e:
-            self._logger.error(f"Error in monitor loop: {e}", exc_info=True)
+            self._logger.error(f"Error in monitor loop: {e} {traceback.format_exc()}")
 
     async def shutdown(self) -> None:
         """Shutdown task manager"""

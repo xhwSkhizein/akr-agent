@@ -7,34 +7,28 @@ AKR-Agent Simple Example
 
 import asyncio
 import json
-import logging
 import os
 import sys
 
 # Add project root directory to Python path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from akr_agent import Agent, ToolCenter
+from akr_agent.agent import Agent
+from akr_agent.tools.base import ToolCenter
 from akr_agent.tools.tool_llm import LLMCallTool
 from akr_agent.tools.tool_search import DuckDuckGoSearchTool
 
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
-logger = logging.getLogger(__name__)
-
+from loguru import logger
 
 async def main():
     """Main function"""
     # Register tools
     ToolCenter.register(
         tool=LLMCallTool(
-            api_key=os.environ.get("OPENAI_API_KEY"),
-            model="gpt-4o-mini",
+            api_key=os.environ.get("DASHSCOPE_API_KEY"),
+            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            model="qwen-turbo-latest",
             temperature=0.7,
             max_tokens=1000,
             stream=True,
@@ -47,16 +41,16 @@ async def main():
     
     # User input
     user_input = "I want to start fitness, what are the suggestions?"
-    print(f"\n--- User Input ---\n{user_input}")
+    logger.info(f"\n--- User Input ---\n{user_input}")
     
     # Run Agent and get response
-    print("\n--- Agent Response ---")
+    logger.info("\n--- Agent Response ---")
     async for chunk in agent.run_dynamic(user_input):
-        print(chunk.content, end="", flush=True)
+        logger.info(chunk.content)
     
-    print("\n\n--- Done ---\n")
-    print("\n--- All Context ---\n")
-    print(
+    logger.info("\n\n--- Done ---\n")
+    logger.info("\n--- All Context ---\n")
+    logger.info(
         json.dumps(agent._context_manager.get_context().to_dict(), indent=2, ensure_ascii=False)
     )
 

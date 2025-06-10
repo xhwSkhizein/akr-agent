@@ -1,14 +1,15 @@
 from typing import Dict, Set, Optional
-
+import traceback
 import uuid
-import logging
+import loguru
+from loguru._logger import Logger
 from collections import defaultdict
 
 from .observable_ctx import ObservableCtx
 from .rule_config import RuleConfig
 
 
-logger = logging.getLogger(__name__)
+logger = loguru.logger
 
 class RuleRegistry:
     """
@@ -112,5 +113,5 @@ class RuleRegistry:
             )
             return bool(result)
         except Exception as e:
-            logger.error(f"Error evaluating condition for rule {rule_id}: {e}")
+            logger.error(f"Error evaluating condition for rule {rule_id}: {e} {traceback.format_exc()}")
             return False

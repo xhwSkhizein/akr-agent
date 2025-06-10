@@ -1,6 +1,8 @@
 import asyncio
 import uuid
-import logging
+import traceback
+import loguru
+from loguru._logger import Logger
 from typing import Dict, Any, AsyncGenerator
 from datetime import datetime
 
@@ -21,14 +23,14 @@ class OutputChunk:
 class OutputStreamManager:
     """Output stream manager, responsible for managing and processing the output of multiple asynchronous generators"""
 
-    def __init__(self, logger: logging.Logger, stream_registration_timeout: float = 1.0):
+    def __init__(self, logger: Logger, stream_registration_timeout: float = 1.0):
         """
         Initialize the output stream manager
         Args:
             logger: Logger
             stream_registration_timeout: When all known streams have been processed, the timeout for waiting for new stream registrations (seconds)
         """
-        self._logger: logging.Logger = logger
+        self._logger: Logger = logger
         # _stream_queue stores dictionaries:
         # {"stream_id": str, "generator": AsyncGenerator, "task_info": TaskInfo}
         self._stream_queue = asyncio.Queue()
@@ -137,7 +139,7 @@ class OutputStreamManager:
                             yield chunk
                         self._logger.info(f"Stream {current_stream_id} (Task: {task_info.task_id}) exhausted normally.")
                     except Exception as e:
-                        self._logger.error(f"Error processing stream {current_stream_id} (Task: {task_info.task_id}): {e}", exc_info=False) # Set exc_info=True for full traceback
+                        self._logger.error(f"Error processing stream {current_stream_id} (Task: {task_info.task_id}): {e}, {traceback.format_exc()}")
                         if task_info: # Ensure task_info is available to create an error chunk
                             try:
                                 error_chunk = OutputChunk(
@@ -153,7 +155,7 @@ class OutputStreamManager:
                 self._logger.info(f"Output stream task cancelled during processing cycle (around stream {current_stream_id}).")
                 break
             except Exception as e: # Catch unexpected errors in the manager's loop logic itself
-                self._logger.error(f"Unexpected error in get_output_stream main loop (around stream {current_stream_id}): {e}", exc_info=True)
+                self._logger.error(f"Unexpected error in get_output_stream main loop (around stream {current_stream_id}): {e}, {traceback.format_exc()}")
                 break # Critical error in manager logic, safer to stop.
             finally:
                 # This block ensures that for every item attempted to be processed (even if it failed or was invalid),

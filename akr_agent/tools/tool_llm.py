@@ -1,7 +1,7 @@
-import logging
 import os
 from typing import Optional
-logger = logging.getLogger(__name__)
+from loguru import logger
+import traceback
 
 from typing import Any, AsyncGenerator, Dict, List
 from jinja2 import Environment, select_autoescape, TemplateError
@@ -113,12 +113,12 @@ class LLMCallTool(Tool):
             template = jinja_env.from_string(system_prompt)
             system_prompt = template.render(**custom_render_ctx)
         except TemplateError as e:
-            logger.error(f"Template rendering error: {e}", exc_info=True)
+            logger.error(f"Template rendering error: {e}, trace={traceback.format_exc()}")
             # Downgrade strategy: return unrendered prompt
             system_prompt = system_prompt + "\n\n[Note: Template rendering failed]"
         except Exception as e:
             logger.error(
-                f"Error rendering prompt template for rule: {rule_config.name}: {e}"
+                f"Error rendering prompt template for rule: {rule_config.name}: {e}, trace={traceback.format_exc()}"
             )
 
         return system_prompt

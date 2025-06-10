@@ -1,6 +1,6 @@
-import logging
+import loguru
+from loguru._logger import Logger
 
-logger = logging.getLogger(__name__)
 from ..libs.crawler.crawl4ai import Crawl4AIWrapper
 from .base import Tool
 

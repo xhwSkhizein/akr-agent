@@ -2,7 +2,9 @@ from typing import Deque, List, Dict, Any, Callable
 from pydantic import BaseModel
 import asyncio
 import enum
-import logging
+import loguru
+from loguru._logger import Logger
+from loguru._logger import Logger
 import threading
 
 
@@ -30,7 +32,7 @@ class EventBus:
     Event bus for internal event passing within Agent
     """
 
-    def __init__(self, logger: logging.Logger):
+    def __init__(self, logger: Logger):
         self._logger = logger
         self._queue = asyncio.Queue()
         # Event subscribers mapping: event type -> callback function list

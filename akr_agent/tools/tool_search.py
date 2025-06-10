@@ -1,8 +1,10 @@
-import logging
+import loguru
+from loguru._logger import Logger
 
-logger = logging.getLogger(__name__)
+logger = loguru.logger
 import json
 import os
+import traceback
 from pydantic import Field
 from typing import AsyncGenerator
 from ..libs.search.duckduckgo import DuckDuckGoSearchAPIWrapper
@@ -63,7 +65,7 @@ class TavilySearchTool(Tool):
                 query=query, max_results=self.max_results
             )
         except Exception as e:
-            logger.error("调用 Tavily Search 失败，", e, stack_info=True)
+            logger.error("调用 Tavily Search 失败，", e, trace=traceback.format_exc())
             yield repr(e)
             return
         cleaned_results = self.api_wrapper.clean_results_with_images(raw_results)

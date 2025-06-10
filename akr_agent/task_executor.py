@@ -1,8 +1,10 @@
 from typing import Dict, Any, AsyncGenerator
 import asyncio
 import time
-import logging
+import loguru
+from loguru._logger import Logger
 import json
+import traceback
 
 from .rule_registery import RuleRegistry
 from .context_manager import ContextManager
@@ -29,12 +31,12 @@ class TaskExecutor:
         self,
         rule_registry: RuleRegistry,
         context_manager: ContextManager,
-        logger: logging.Logger,
+        logger: Logger,
         # event_bus: EventBus, # 响应复杂情况时使用
     ):
         self._rule_registry: RuleRegistry = rule_registry
         self._context_manager: ContextManager = context_manager
-        self._logger: logging.Logger = logger
+        self._logger: Logger = logger
         self._executing_tasks: Dict[str, asyncio.Task] = {}
 
     async def _prepare_tool_params(self, task_info: TaskInfo) -> Dict[str, Any]:
@@ -130,7 +132,7 @@ class TaskExecutor:
                 )
             except Exception as e:
                 self._logger.error(
-                    f"Error: Failed to prepare parameters for tool {rule_config.tool}: {e}"
+                    f"Error: Failed to prepare parameters for tool {rule_config.tool}: {e}, {traceback.format_exc()}"
                 )
                 async for chunk in emit_error(
                     f"Error: Failed to prepare parameters for tool {rule_config.tool}: {e}"
@@ -156,7 +158,7 @@ class TaskExecutor:
                 raise  # Re-raise cancellation error
             except Exception as e:
                 self._logger.error(
-                    f"Task {task_id}: Tool {rule_config.tool} execution failed: {e}"
+                    f"Task {task_id}: Tool {rule_config.tool} execution failed: err={e}, {traceback.format_exc()}"
                 )
                 async for chunk in emit_error(
                     f"Error: Tool {rule_config.tool} execution failed: {e}"
@@ -180,7 +182,7 @@ class TaskExecutor:
                 self._logger.info(f"Task {task_id}: Tool result handled")
             except json.JSONDecodeError as e:
                 self._logger.error(
-                    f"Error: Tool {rule_config.tool}, task {task_id} result handling failed (invalid format): {e}"
+                    f"Error: Tool {rule_config.tool}, task {task_id} result handling failed (invalid format): {e}, {traceback.format_exc()}"
                 )
                 async for chunk in emit_error(
                     f"Error: Tool {rule_config.tool}, task {task_id} result handling failed (invalid format): {e}"
@@ -189,7 +191,7 @@ class TaskExecutor:
                 return
             except Exception as e:
                 self._logger.error(
-                    f"Error: Tool {rule_config.tool}, task {task_id} result handling failed: {e}"
+                    f"Error: Tool {rule_config.tool}, task {task_id} result handling failed: err={e}, {traceback.format_exc()}"
                 )
                 async for chunk in emit_error(
                     f"Error: Tool {rule_config.tool}, task {task_id} result handling failed: {e}"
@@ -214,7 +216,7 @@ class TaskExecutor:
 
         except Exception as e:
             self._logger.error(
-                f"Task {task_id}: Unexpected error in execute_task: {e}", exc_info=True
+                f"Task {task_id}: Unexpected error in execute_task: err={e}, {traceback.format_exc()}"
             )
             async for chunk in emit_error(
                 f"Task {task_id}: Unexpected error in execute_task: {e}"

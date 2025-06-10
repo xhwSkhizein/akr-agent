@@ -1,12 +1,13 @@
 import json
 import os
 import time
-import logging
+import loguru
+from loguru._logger import Logger
 
 from typing import Optional, Literal, List, Dict, Any
 from pydantic import BaseModel
 
-logger = logging.getLogger(__name__)
+logger = loguru.logger
 
 
 class AgentMeta(BaseModel):
