@@ -66,7 +66,7 @@ class OpenAIClient(LLMClient):
         Args:
             system_prompt: System prompt (only used to build initial messages on first call or when messages is None)
             user_input: User input (only used to build initial messages on first call or when messages is None)
-            messages: Optional, preset messages list. If provided, system_prompt and user_input are ignored to build initial messages.
+            messages: Optional, preset messages list.
             run_tool_func: Optional async function to execute tool calls. Signature should be: async def run_tool(tool_name: str, tool_args: str) -> Any
             **kwargs: Override default parameters or pass additional parameters (e.g. tools, tool_choice)
                 - ctx_manager: Context manager, used to output assistant messages
@@ -74,15 +74,6 @@ class OpenAIClient(LLMClient):
         Yields:
             Response fragment (str)
         """
-        current_messages: List[Dict[str, Any]]
-        if messages is not None:
-            current_messages = list(messages)  # use provided message list copy
-        else:
-            current_messages = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_input},
-            ]
-
         # prepare API call parameters
         # note: kwargs passed to _prepare_params, it will merge instance attributes and these runtime parameters
         api_params = {
@@ -93,8 +84,8 @@ class OpenAIClient(LLMClient):
         api_params.update(
             self._prepare_params(
                 system_prompt=system_prompt,  # pass to _prepare_params for possible initial message building logic
-                prompt=user_input,  # same as above
-                current_messages=current_messages,  # most important: pass current message history
+                user_input=user_input,  # same as above
+                messages=messages,  # most important: pass current message history
                 **kwargs,  # include tools, tool_choice, etc
             )
         )
@@ -442,36 +433,46 @@ class OpenAIClient(LLMClient):
     def _prepare_params(
         self,
         system_prompt: str,
-        prompt: str,
-        current_messages: Optional[List[Dict[str, Any]]] = None,
+        user_input: str,
+        messages: Optional[List[Dict[str, Any]]] = None,
         **kwargs,
     ) -> Dict[str, Any]:
         """
         Prepare API call parameters
 
         Args:
-            system_prompt: System prompt (used when current_messages is None)
-            prompt: User prompt (used when current_messages is None)
-            current_messages: Current conversation message list
+            system_prompt: System prompt
+            user_input: User input
+            messages: Current conversation message list
             **kwargs: Runtime parameters, will override instance default settings
 
         Returns:
             API call parameters dictionary
         """
-        # Use current_messages if provided
-        if current_messages:
-            messages_payload = current_messages
-        else:
-            messages_payload = [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": prompt},
-            ]
+        current_messages: List[Dict[str, Any]] = []
 
+        current_messages.append({"role": "system", "content": system_prompt})
+        if messages is not None:
+            current_messages.extend(messages)  # use provided message list copy
+        new_input = []
+        if kwargs.get("image_url", None) is not None:
+            new_input.extend(
+                [
+                    {
+                        "type": "image_url",
+                        "image_url": kwargs.get("image_url"),
+                    },
+                    {"type": "text", "text": user_input},
+                ]
+            )
+        else:
+            new_input.append({"type": "text", "text": user_input})
+        
         # Basic parameters, allow being overridden by kwargs
         params: Dict[str, Any] = {
             "model": kwargs.get("model", self.model),
             "temperature": kwargs.get("temperature", self.temperature),
-            "messages": messages_payload,
+            "messages": current_messages,
         }
 
         # Optional parameters

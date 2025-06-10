@@ -54,6 +54,7 @@ class TextPrompt(DataClassJsonMixin):
     """Internal representation of user-generated text prompt."""
 
     text: str
+    image_url: Optional[str] = None
     role: Literal["user", "assistant"] = "user"
 
 

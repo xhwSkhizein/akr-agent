@@ -7,7 +7,7 @@ Agent core class
 
 import loguru
 from loguru._logger import Logger
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 
 from .agent_config_engine import AgentConfigEngine
 
@@ -56,7 +56,7 @@ class Agent:
             logger=self._logger,
         )
 
-    async def run_dynamic(self, user_input: str) -> AsyncGenerator[OutputChunk, None]:
+    async def run_dynamic(self, user_input: str, image_url: Optional[str] = None) -> AsyncGenerator[OutputChunk, None]:
         """
         Run Agent's dynamic conversation flow
 
@@ -68,7 +68,7 @@ class Agent:
         """
         self._logger.info(f"Agent run_dynamic started with input: {user_input}")
 
-        await self._dispatcher.add_user_input(user_input)
+        await self._dispatcher.add_user_input(user_input, image_url=image_url)
 
         async for chunk in self._dispatcher.get_output_stream():
             yield chunk

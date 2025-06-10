@@ -52,6 +52,8 @@ class ContextManager:
         self._ctx.append("dialogue.history", message.to_dict())
         if isinstance(message, TextPrompt):
             self._ctx.set("user_input", message.text)
+            if message.image_url:
+                self._ctx.set("image_url", message.image_url)
             self.emit_event(
                 RealTimeEvent(type=EventType.USER_MESSAGE, data=message.to_dict())
             )

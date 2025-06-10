@@ -1,7 +1,7 @@
 import loguru
 from loguru._logger import Logger
 import asyncio
-from typing import List, AsyncGenerator
+from typing import List, AsyncGenerator, Optional
 from .workspace_manager import WorkspaceManager
 from .context_manager import ContextManager
 from .event_bus import EventType, RealTimeEvent
@@ -91,9 +91,9 @@ class DynamicDispatcher:
         )
         await self.add_rule(rule_config=rule_config, immediate=immediate)
 
-    async def add_user_input(self, user_input: str):
+    async def add_user_input(self, user_input: str, image_url: Optional[str] = None):
         self._logger.info(f"Received user input: {user_input}")
-        text_prompt = TextPrompt(text=user_input)
+        text_prompt = TextPrompt(text=user_input, image_url=image_url)
         await self._context_manager.emit_and_append_to_history(text_prompt)
 
     def add_rule(self, rule_config: RuleConfig, immediate: bool = False) -> str:

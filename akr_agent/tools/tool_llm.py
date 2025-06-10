@@ -80,6 +80,7 @@ class LLMCallTool(Tool):
             run_tool_func=ToolCenter.run_tool,
             tools=tool_defs,
             ctx_manager=kwargs.get("ctx_manager"),
+            image_url=kwargs.get("image_url"),
         ):
             yield chunk
 
