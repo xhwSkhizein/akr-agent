@@ -1,4 +1,4 @@
-name: Default QA
+name: DefaultQA
 depend_ctx_key:
   - intent_analyze_result
 match_condition: "ctx.get('intent_analyze_result') is not None"
@@ -11,6 +11,7 @@ tool: LLMCallTool
 tool_params:
   ctx:
     - user_input
+    - image_url
     - system_prompt
     - intent_analyze_result.intent
     - intent_analyze_result.potential_need

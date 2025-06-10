@@ -117,10 +117,11 @@ class OpenAIClient(LLMClient):
                 tool_calls = []
                 # used to accumulate text content in current LLM response (if LLM speaks before requesting tool calls)
                 # current_assistant_content_parts: List[str] = []
-
+                token_usage = None
                 async for chunk in response_stream:
-                    if chunk.usage:
+                    if chunk.usage and token_usage is None:
                         # token usage statistics
+                        token_usage = chunk.usage
                         total_tokens = chunk.usage.total_tokens
                         prompt_tokens = chunk.usage.prompt_tokens
                         completion_tokens = chunk.usage.completion_tokens
@@ -460,7 +461,9 @@ class OpenAIClient(LLMClient):
                 [
                     {
                         "type": "image_url",
-                        "image_url": kwargs.get("image_url"),
+                        "image_url": {
+                            "url": kwargs.get("image_url"),
+                        },
                     },
                     {"type": "text", "text": user_input},
                 ]
@@ -468,9 +471,9 @@ class OpenAIClient(LLMClient):
         else:
             new_input.append({"type": "text", "text": user_input})
         current_messages.append({"role": "user", "content": new_input})
-        
-        logger.warning(f"OpenAI History messages: {current_messages}")
-        
+
+        logger.debug(f"OpenAI History messages: {current_messages}")
+
         # Basic parameters, allow being overridden by kwargs
         params: Dict[str, Any] = {
             "model": kwargs.get("model", self.model),
