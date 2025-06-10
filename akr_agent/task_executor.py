@@ -56,7 +56,7 @@ class TaskExecutor:
             tool_params[key] = getattr(rule_config, key)
 
         # Add extra parameters
-        extra_params = rule_config.tool_params.get("extra", {})
+        extra_params = rule_config.tool_params.get("extra", {}) or {}
         tool_params.update(extra_params)
 
         # Add context and rule config
