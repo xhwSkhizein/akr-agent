@@ -5,3 +5,4 @@ pytest-asyncio
 duckduckgo-search
 tavily-python
 crawl4ai
+openai==1.84.0
