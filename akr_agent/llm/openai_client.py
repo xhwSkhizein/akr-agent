@@ -491,6 +491,12 @@ class OpenAIClient(LLMClient):
                 key not in params
             ):  # Avoid overriding parameters already set in kwargs or method fixed settings
                 params[key] = value
+                
+        if "tools" in params and params["tools"] is []:
+            params.pop("tools")
+            params.pop("tool_choice")
+        if "tool_choice" in params and params["tool_choice"] is []:
+            params.pop("tool_choice")
 
         # Ensure other parameters not explicitly handled in kwargs are also added, allowing complete flexibility
         # But be careful not to override core parameters like 'model', 'messages', 'stream' that have already been set
