@@ -1,6 +1,6 @@
 import logging
 import os
-
+from typing import Optional
 logger = logging.getLogger(__name__)
 
 from typing import Any, AsyncGenerator, Dict, List
@@ -33,16 +33,17 @@ class LLMCallTool(Tool):
         - tools: Tool list
     """
 
-    def __init__(self, **kwargs):
-        # FIXME support build any kind of LLM clients
-        self.llm_client = OpenAIClient(
-            model=kwargs.get("model", "gpt4o-mini"),
-            api_key=kwargs.get("api_key", os.environ.get("OPENAI_API_KEY")),
-            base_url=kwargs.get("base_url", "https://api.openai.com"),
-            temperature=kwargs.get("temperature", 0.7),
-            max_tokens=kwargs.get("max_tokens", 1024),
-            stream=kwargs.get("stream", True),
-        )
+    def __init__(self, llm_client: Optional[OpenAIClient] = None, **kwargs):
+        self.llm_client = llm_client
+        if not self.llm_client:
+            self.llm_client = OpenAIClient(
+                model=kwargs.get("model", "gpt4o-mini"),
+                api_key=kwargs.get("api_key", os.environ.get("OPENAI_API_KEY")),
+                base_url=kwargs.get("base_url", "https://api.openai.com"),
+                temperature=kwargs.get("temperature", 0.7),
+                max_tokens=kwargs.get("max_tokens", 1024),
+                stream=kwargs.get("stream", True),
+            )
 
     async def run(
         self,
