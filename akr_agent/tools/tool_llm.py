@@ -38,6 +38,7 @@ class LLMCallTool(Tool):
         self.llm_client = OpenAIClient(
             model=kwargs.get("model", "gpt4o-mini"),
             api_key=kwargs.get("api_key", os.environ.get("OPENAI_API_KEY")),
+            base_url=kwargs.get("base_url", "https://api.openai.com"),
             temperature=kwargs.get("temperature", 0.7),
             max_tokens=kwargs.get("max_tokens", 1024),
             stream=kwargs.get("stream", True),

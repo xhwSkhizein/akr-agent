@@ -28,6 +28,7 @@ class OpenAIClient(LLMClient):
     def __init__(
         self,
         api_key: Optional[str] = None,
+        base_url: Optional[str] = None,
         model: str = "gpt-4o-mini",  # suggest use new model support tool_calls
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
@@ -44,7 +45,7 @@ class OpenAIClient(LLMClient):
             **kwargs: Other OpenAI API parameters (e.g. base_url, timeout, etc.)
         """
         self.client = AsyncOpenAI(
-            api_key=api_key, **kwargs.pop("client_args", {})
+            api_key=api_key, base_url=base_url, **kwargs.pop("client_args", {})
         )  # pass additional parameters to client
         self.model = model
         self.temperature = temperature
@@ -85,12 +86,17 @@ class OpenAIClient(LLMClient):
 
         # prepare API call parameters
         # note: kwargs passed to _prepare_params, it will merge instance attributes and these runtime parameters
-        api_params = self._prepare_params(
+        api_params = {
+            "model": self.model,
+            "temperature": self.temperature,
+            "max_tokens": self.max_tokens,
+        }
+        api_params.update(self._prepare_params(
             system_prompt=system_prompt,  # pass to _prepare_params for possible initial message building logic
             prompt=user_input,  # same as above
             current_messages=current_messages,  # most important: pass current message history
             **kwargs,  # include tools, tool_choice, etc
-        )
+        ))
         api_params["stream"] = True
         api_params["stream_options"] = {
             "include_usage": True,

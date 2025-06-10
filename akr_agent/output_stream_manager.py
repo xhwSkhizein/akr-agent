@@ -21,7 +21,7 @@ class OutputChunk:
 class OutputStreamManager:
     """Output stream manager, responsible for managing and processing the output of multiple asynchronous generators"""
 
-    def __init__(self, logger: logging.Logger, stream_registration_timeout: float = 5.0):
+    def __init__(self, logger: logging.Logger, stream_registration_timeout: float = 1.0):
         """
         Initialize the output stream manager
         Args:
@@ -95,6 +95,7 @@ class OutputStreamManager:
                         stream_data = await asyncio.wait_for(
                             self._stream_queue.get(), timeout=self._stream_registration_timeout
                         )
+                        yield OutputChunk(content="...", task_info=None)
                         # If we get here, a new stream was registered and added.
                         # _registered_stream_count would have been incremented by register_stream.
                     except asyncio.TimeoutError:

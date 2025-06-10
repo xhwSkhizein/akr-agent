@@ -51,6 +51,7 @@ class Agent:
             context_manager=self._context_manager,
             max_concurrent_tasks=self._config.max_concurrent_tasks,
             timeout_detection_time=self._config.timeout_detection_time,
+            stream_registration_timeout=self._config.stream_registration_timeout,
             logger=self._logger,
         )
 

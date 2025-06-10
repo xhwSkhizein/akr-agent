@@ -24,6 +24,7 @@ class DynamicDispatcher:
         context_manager: ContextManager,
         max_concurrent_tasks: int,
         timeout_detection_time: int,
+        stream_registration_timeout: int,
         logger: logging.Logger,
     ):
         self._rules = initial_rules
@@ -34,7 +35,7 @@ class DynamicDispatcher:
         self._task_executor = TaskExecutor(
             self._rule_registry, self._context_manager, self._logger
         )
-        self._output_manager = OutputStreamManager(logger=logger)
+        self._output_manager = OutputStreamManager(logger=logger, stream_registration_timeout=stream_registration_timeout)
         self._task_manager = TaskManager(
             self._context_manager,
             executor=self._task_executor,
