@@ -84,7 +84,7 @@ class TaskExecutor:
                 rule_config.tool_result_key, response_full
             )
             await self._context_manager.emit_and_append_to_history(
-                AIContext(context=response_full)
+                AIContext(key=rule_config.tool_result_key, context=response_full)
             )
 
         elif rule_config.tool_result_target == "NEW_RULES":

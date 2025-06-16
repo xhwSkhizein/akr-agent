@@ -70,6 +70,7 @@ class ImageBlock(DataClassJsonMixin):
 class AIContext(DataClassJsonMixin):
     """Internal representation of LLM-generated middle result."""
 
+    key: str
     context: str
     role: Literal["assistant"] = "assistant"
 
