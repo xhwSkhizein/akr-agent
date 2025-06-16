@@ -503,7 +503,7 @@ class OpenAIClient(LLMClient):
             ):  # Avoid overriding parameters already set in kwargs or method fixed settings
                 params[key] = value
 
-        if len(params.get("tools", [])) == 0:
+        if "tools" in params and len(params.get("tools", [])) == 0:
             params.pop("tools")
             if "tool_choice" in params:
                 params.pop("tool_choice")
