@@ -111,4 +111,7 @@ class AgentConfigEngine:
             meta=agent_meta,
             system_prompt=system_prompt,
             rules=rules,
+            max_concurrent_tasks=meta_data.get("agent", {}).get("max_concurrent_tasks", 1),
+            timeout_detection_sec=meta_data.get("agent", {}).get("timeout_detection_sec", 60),
+            stream_registration_timeout=meta_data.get("agent", {}).get("stream_registration_timeout", 1),
         )

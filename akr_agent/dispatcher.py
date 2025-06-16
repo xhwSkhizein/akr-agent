@@ -24,7 +24,7 @@ class DynamicDispatcher:
         workspace_manager: WorkspaceManager,
         context_manager: ContextManager,
         max_concurrent_tasks: int,
-        timeout_detection_time: int,
+        timeout_detection_sec: int,
         stream_registration_timeout: int,
         logger: Logger,
     ):
@@ -43,7 +43,7 @@ class DynamicDispatcher:
             output_manager=self._output_manager,
             logger=self._logger,
             max_concurrent_tasks=max_concurrent_tasks,
-            timeout_detection_time=timeout_detection_time,
+            timeout_detection_sec=timeout_detection_sec,
         )
         # Initialize rules
         if initial_rules:
@@ -91,9 +91,9 @@ class DynamicDispatcher:
         )
         await self.add_rule(rule_config=rule_config, immediate=immediate)
 
-    async def add_user_input(self, user_input: str, image_url: Optional[str] = None):
+    async def add_user_input(self, user_input: str, image_url: Optional[str] = None, image_url_detail: Optional[str] = None):
         self._logger.info(f"Received user input: {user_input}")
-        text_prompt = TextPrompt(text=user_input, image_url=image_url)
+        text_prompt = TextPrompt(text=user_input, image_url=image_url, image_url_detail=image_url_detail)
         await self._context_manager.emit_and_append_to_history(text_prompt)
 
     def add_rule(self, rule_config: RuleConfig, immediate: bool = False) -> str:

@@ -46,7 +46,7 @@ async def main():
     
     # Run Agent and get response
     logger.info("\n--- Agent Response ---")
-    async for chunk in agent.run_dynamic(user_input, image_url=image_url):
+    async for chunk in agent.run_dynamic(user_input, image_url=image_url, image_url_detail="high"):
         logger.info(chunk.content)
     
     logger.info("\n\n--- Done ---\n")

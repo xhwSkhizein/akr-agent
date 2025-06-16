@@ -12,6 +12,7 @@ tool_params:
   ctx:
     - user_input
     - image_url
+    - image_url_detail
     - system_prompt
     - intent_analyze_result.intent
     - intent_analyze_result.potential_need

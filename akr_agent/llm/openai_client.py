@@ -457,12 +457,14 @@ class OpenAIClient(LLMClient):
             current_messages.extend(messages)  # use provided message list copy
         new_input = []
         if kwargs.get("image_url", None) is not None:
+            image_url_detail = kwargs.get("image_url_detail", "high")
             new_input.extend(
                 [
                     {
                         "type": "image_url",
                         "image_url": {
                             "url": kwargs.get("image_url"),
+                            "detail": image_url_detail,
                         },
                     },
                     {"type": "text", "text": user_input},

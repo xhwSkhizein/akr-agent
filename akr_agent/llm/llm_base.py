@@ -55,6 +55,7 @@ class TextPrompt(DataClassJsonMixin):
 
     text: str
     image_url: Optional[str] = None
+    image_url_detail: Optional[str] = "high"
     role: Literal["user", "assistant"] = "user"
 
 

@@ -51,24 +51,26 @@ class Agent:
             workspace_manager=self._workspace_manager,
             context_manager=self._context_manager,
             max_concurrent_tasks=self._config.max_concurrent_tasks,
-            timeout_detection_time=self._config.timeout_detection_time,
+            timeout_detection_sec=self._config.timeout_detection_sec,
             stream_registration_timeout=self._config.stream_registration_timeout,
             logger=self._logger,
         )
 
-    async def run_dynamic(self, user_input: str, image_url: Optional[str] = None) -> AsyncGenerator[OutputChunk, None]:
+    async def run_dynamic(self, user_input: str, image_url: Optional[str] = None, image_url_detail: Optional[str] = None) -> AsyncGenerator[OutputChunk, None]:
         """
         Run Agent's dynamic conversation flow
 
         Args:
             user_input: User input
+            image_url: Image URL
+            image_url_detail: Image URL detail
 
         Yields:
             str: Generated response chunk
         """
         self._logger.info(f"Agent run_dynamic started with input: {user_input}")
 
-        await self._dispatcher.add_user_input(user_input, image_url=image_url)
+        await self._dispatcher.add_user_input(user_input, image_url=image_url, image_url_detail=image_url_detail)
 
         async for chunk in self._dispatcher.get_output_stream():
             yield chunk

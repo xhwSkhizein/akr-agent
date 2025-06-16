@@ -140,6 +140,6 @@ class AgentConfig(BaseModel):
     system_prompt: str
     rules: List[RuleConfig]
     max_concurrent_tasks: int = 1
-    timeout_detection_time: int = 60
+    timeout_detection_sec: int = 180
     stream_registration_timeout: int = 1
     

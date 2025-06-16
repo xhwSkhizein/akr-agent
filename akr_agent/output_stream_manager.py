@@ -97,7 +97,6 @@ class OutputStreamManager:
                         stream_data = await asyncio.wait_for(
                             self._stream_queue.get(), timeout=self._stream_registration_timeout
                         )
-                        yield OutputChunk(content="...", task_info=None)
                         # If we get here, a new stream was registered and added.
                         # _registered_stream_count would have been incremented by register_stream.
                     except asyncio.TimeoutError:

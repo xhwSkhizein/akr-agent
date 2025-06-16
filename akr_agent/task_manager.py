@@ -37,7 +37,7 @@ class TaskManager:
         output_manager: OutputStreamManager,
         logger: Logger,
         max_concurrent_tasks: int = 10,
-        timeout_detection_time: int = 60,
+        timeout_detection_sec: int = 60,
     ):
         self._context_manager: ContextManager = context_manager
         self._executor: TaskExecutor = executor
@@ -48,7 +48,7 @@ class TaskManager:
         # Task monitor
         self._monitor_task: Optional[asyncio.Task] = None
         # Timeout detection
-        self._timeout_detection_time: int = timeout_detection_time
+        self._timeout_detection_sec: int = timeout_detection_sec
         # Start monitor task
         self._start_monitor()
 
@@ -234,7 +234,7 @@ class TaskManager:
             task_id
             for task_id, task_info in self._tasks.items()
             if not self.is_task_completed(task_id)
-            and current_time - task_info.updated_at > self._timeout_detection_time
+            and current_time - task_info.updated_at > self._timeout_detection_sec
         ]
 
     def _start_monitor(self) -> None:
@@ -259,9 +259,9 @@ class TaskManager:
                         await self._schedule_task(task_id)
                         continue
                     
-                    if time.time() - self._tasks[task_id].updated_at > self._timeout_detection_time:
+                    if time.time() - self._tasks[task_id].updated_at > self._timeout_detection_sec:
                         self._logger.warning(
-                            f"Task {task_id} has been inactive for {self._timeout_detection_time} seconds."
+                            f"Task {task_id} has been inactive for {self._timeout_detection_sec} seconds."
                         )
                         # Try to mark the stuck task as failed
                         if self.is_task_executing(task_id):
