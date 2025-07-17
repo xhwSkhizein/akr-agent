@@ -20,6 +20,11 @@ from akr_agent.tools.tool_search import DuckDuckGoSearchTool
 
 
 from loguru import logger
+import sys
+
+# 设置日志级别为DEBUG
+logger.remove()
+logger.add(sys.stderr, level="DEBUG")
 
 async def main():
     """Main function"""
@@ -32,6 +37,8 @@ async def main():
             temperature=0.7,
             max_tokens=1000,
             stream=True,
+            enable_logging=True,
+            log_dir="logs/llm_calls"
         )
     )
     ToolCenter.register(tool=DuckDuckGoSearchTool(), name="DuckDuckGoSearchTool")

@@ -123,3 +123,4 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+logs/llm_calls/llm_calls_20250717.jsonl

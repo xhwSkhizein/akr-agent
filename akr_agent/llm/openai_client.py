@@ -3,6 +3,7 @@ OpenAI LLM client implementation
 """
 
 import asyncio
+import time
 from typing import Any, AsyncGenerator, Dict, Optional, List, Callable
 import json
 import traceback
@@ -15,6 +16,7 @@ from openai.types.chat.chat_completion_message_tool_call import (
 
 from .base import LLMClient
 from .llm_base import ToolCall, ToolResult, TokenUsage
+from .llm_logger import LLMLogger
 
 from loguru import logger
 
@@ -31,6 +33,9 @@ class OpenAIClient(LLMClient):
         model: str = "gpt-4o-mini",  # suggest use new model support tool_calls
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
+        enable_logging: bool = True,
+        log_dir: str = "logs/llm_calls",
+        log_filename: Optional[str] = None,
         **kwargs,
     ):
         """
@@ -41,6 +46,9 @@ class OpenAIClient(LLMClient):
             model: Model name
             temperature: Temperature parameter
             max_tokens: Maximum tokens
+            enable_logging: 是否启用LLM调用日志记录
+            log_dir: 日志文件目录
+            log_filename: 日志文件名，默认为"llm_calls_{日期}.jsonl"
             **kwargs: Other OpenAI API parameters (e.g. base_url, timeout, etc.)
         """
         self.client = AsyncOpenAI(
@@ -50,6 +58,14 @@ class OpenAIClient(LLMClient):
         self.temperature = temperature
         self.max_tokens = max_tokens
         self.extra_params = kwargs  # other parameters passed to completions.create
+        
+        # 初始化LLM调用日志记录器
+        self.llm_logger = LLMLogger(
+            log_dir=log_dir + f"/{model}",
+            log_filename=log_filename,
+            enable=enable_logging
+        )
+        
         logger.info(f"Initialize OpenAI client, model: {model}")
 
     async def invoke_stream(
@@ -99,6 +115,15 @@ class OpenAIClient(LLMClient):
             ctx_manager: ContextManager = kwargs.get("ctx_manager")
         else:
             ctx_manager = None
+            
+        # 记录LLM请求
+        current_messages = api_params.get("messages", [])
+        call_id = self.llm_logger.log_request(
+            model=api_params.get("model", self.model),
+            messages=current_messages,
+            params=api_params
+        )
+        start_time = time.time()
 
         max_retries = 3
         retry_count = 0
@@ -116,8 +141,9 @@ class OpenAIClient(LLMClient):
                 active_tool_calls_data: Dict[str, Dict[str, str]] = {}
                 tool_calls = []
                 # used to accumulate text content in current LLM response (if LLM speaks before requesting tool calls)
-                # current_assistant_content_parts: List[str] = []
+                current_assistant_content_parts: List[str] = []
                 token_usage = None
+                current_messages = api_params.get("messages", [])  # 获取当前消息历史，用于日志记录
                 async for chunk in response_stream:
                     if chunk.usage and token_usage is None:
                         # token usage statistics
@@ -160,7 +186,7 @@ class OpenAIClient(LLMClient):
 
                     # 1. process text content
                     if delta and delta.content:
-                        # current_assistant_content_parts.append(delta.content)
+                        current_assistant_content_parts.append(delta.content)
                         yield delta.content
 
                     # 2. process tool_calls
@@ -204,10 +230,20 @@ class OpenAIClient(LLMClient):
                             return  # end generation
 
                         # 3.1 build assistant message history (include tool call requests)
-                        # streamed_content = "".join(current_assistant_content_parts)
-                        # current_assistant_content_parts.clear() # clear for next round (if recursive)
+                        streamed_content = "".join(current_assistant_content_parts)
+                        current_assistant_content_parts.clear() # clear for next round (if recursive)
+                        
+                        # 记录LLM响应
+                        end_time = time.time()
+                        duration_ms = (end_time - start_time) * 1000
+                        self.llm_logger.log_response(
+                            call_id=call_id,
+                            response_content=streamed_content,
+                            token_usage=token_usage.model_dump() if token_usage else None,
+                            duration_ms=duration_ms
+                        )
 
-                        logger.info(f"llm finsih with tool_calls, {tool_calls}")
+                        logger.info(f"llm finish with tool_calls, {tool_calls}")
 
                         assistant_tool_calls_list: List[
                             ChatCompletionMessageToolCall
@@ -331,6 +367,20 @@ class OpenAIClient(LLMClient):
                                 logger.info(
                                     f"tool {tool_name} (ID: {tool_call_id}) result: {tool_result_content}"
                                 )
+                                
+                                # 记录工具调用和结果
+                                self.llm_logger.log_tool_call(
+                                    call_id=call_id,
+                                    tool_name=tool_name,
+                                    tool_args=tool_args,
+                                    tool_call_id=tool_call_id
+                                )
+                                self.llm_logger.log_tool_result(
+                                    call_id=call_id,
+                                    tool_call_id=tool_call_id,
+                                    tool_name=tool_name,
+                                    tool_result=tool_result_content
+                                )
                                 tool_results_messages.append(
                                     {
                                         "role": "tool",
@@ -344,6 +394,21 @@ class OpenAIClient(LLMClient):
                             except Exception as e:
                                 logger.error(
                                     f"tool {tool_name} (ID: {tool_call_id}) execution failed: err={e}, trace={traceback.format_exc()}"
+                                )
+                                
+                                # 记录工具调用和错误结果
+                                self.llm_logger.log_tool_call(
+                                    call_id=call_id,
+                                    tool_name=tool_name,
+                                    tool_args=tool_args,
+                                    tool_call_id=tool_call_id
+                                )
+                                self.llm_logger.log_tool_result(
+                                    call_id=call_id,
+                                    tool_call_id=tool_call_id,
+                                    tool_name=tool_name,
+                                    tool_result=f"error: failed to execute tool {tool_name}: {str(e)}",
+                                    error=str(e)
                                 )
                                 tool_results_messages.append(
                                     {
@@ -386,6 +451,17 @@ class OpenAIClient(LLMClient):
                         f"Stream ended (finish_reason: {finish_reason}), but there are still unprocessed tool call data: {active_tool_calls_data}"
                     )
                     yield f"\n[warning: stream ended unexpectedly, there may be incomplete tool call requests: {list(active_tool_calls_data.keys())}]\n"
+                
+                # 记录LLM响应（正常结束的情况）
+                streamed_content = "".join(current_assistant_content_parts)
+                end_time = time.time()
+                duration_ms = (end_time - start_time) * 1000
+                self.llm_logger.log_response(
+                    call_id=call_id,
+                    response_content=streamed_content,
+                    token_usage=token_usage.model_dump() if token_usage else None,
+                    duration_ms=duration_ms
+                )
 
                 break  # Successfully completed or normally ended, exit retry loop
 
@@ -398,13 +474,27 @@ class OpenAIClient(LLMClient):
                     )
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error(
-                        f"API rate limit exceeded, reached maximum retry count: {e}"
+                    error_msg = f"API rate limit exceeded, reached maximum retry count: {e}"
+                    logger.error(error_msg)
+                    # 记录错误
+                    self.llm_logger.log_response(
+                        call_id=call_id,
+                        response_content="",
+                        error=error_msg,
+                        duration_ms=(time.time() - start_time) * 1000
                     )
                     yield "\nError: API rate limit exceeded, please try again later.\n"
                     break
             except openai.AuthenticationError as e:
-                logger.error(f"OpenAI API authentication failed: {e}")
+                error_msg = f"OpenAI API authentication failed: {e}"
+                logger.error(error_msg)
+                # 记录错误
+                self.llm_logger.log_response(
+                    call_id=call_id,
+                    response_content="",
+                    error=error_msg,
+                    duration_ms=(time.time() - start_time) * 1000
+                )
                 yield "\nError: API authentication failed, please check API key configuration.\n"
                 break
             except (openai.APIConnectionError, asyncio.TimeoutError) as e:
@@ -416,17 +506,36 @@ class OpenAIClient(LLMClient):
                     )
                     await asyncio.sleep(wait_time)
                 else:
-                    logger.error(
-                        f"Failed to connect to OpenAI API, reached maximum retry count: {e}"
+                    error_msg = f"Failed to connect to OpenAI API, reached maximum retry count: {e}"
+                    logger.error(error_msg)
+                    # 记录错误
+                    self.llm_logger.log_response(
+                        call_id=call_id,
+                        response_content="",
+                        error=error_msg,
+                        duration_ms=(time.time() - start_time) * 1000
                     )
                     yield f"\nError: Failed to connect to OpenAI API: {e}\n"
                     break
             except asyncio.CancelledError:
                 logger.info("OpenAI API request cancelled")
+                # 记录取消请求
+                self.llm_logger.log_response(
+                    call_id=call_id,
+                    response_content="",
+                    error="Request cancelled",
+                    duration_ms=(time.time() - start_time) * 1000
+                )
                 break  # Do not retry
             except Exception as e:
-                logger.error(
-                    f"Unexpected error in OpenAI API call: err={e}, trace={traceback.format_exc()}"
+                error_msg = f"Unexpected error in OpenAI API call: err={e}, trace={traceback.format_exc()}"
+                logger.error(error_msg)
+                # 记录错误
+                self.llm_logger.log_response(
+                    call_id=call_id,
+                    response_content="",
+                    error=str(e),
+                    duration_ms=(time.time() - start_time) * 1000
                 )
                 yield f"\nError: {str(e)}\n"
                 break  # Do not retry unknown error

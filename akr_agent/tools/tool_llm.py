@@ -43,6 +43,10 @@ class LLMCallTool(Tool):
                 temperature=kwargs.get("temperature", 0.7),
                 max_tokens=kwargs.get("max_tokens", 1024),
                 stream=kwargs.get("stream", True),
+                # 添加日志相关参数
+                enable_logging=kwargs.get("enable_logging", True),
+                log_dir=kwargs.get("log_dir", "logs/llm_calls"),
+                log_filename=kwargs.get("log_filename", None),
             )
 
     async def run(
